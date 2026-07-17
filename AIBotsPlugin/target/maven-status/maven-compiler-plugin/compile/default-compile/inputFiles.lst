@@ -1,3 +1,13 @@
-C:\Projects\AIBotsPlugin\src\main\java\com\aibots\AIBot.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\AIBotsPlugin.java
-C:\Projects\AIBotsPlugin\src\main\java\com\aibots\LMStudioClient.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\command\CrewCommand.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\BotStatus.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\BotTitle.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\CrewBot.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\CrewManager.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\listener\ChatListener.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\llm\LMStudioClient.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\llm\RolePrompts.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\ArmorStandHandle.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\CitizensHandle.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\NpcHandle.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\NpcService.java

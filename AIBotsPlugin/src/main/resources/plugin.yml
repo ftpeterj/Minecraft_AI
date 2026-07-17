@@ -1,10 +1,26 @@
 name: AIBots
-version: 1.0
+version: '1.1.0'
 main: com.aibots.AIBotsPlugin
-api-version: 1.21
+api-version: '1.21'
+author: ftpeterj
+description: Multi-role summonable AI crew with optional Citizens avatars
+softdepend: [Citizens]
+
 commands:
+  crew:
+    description: Manage AI crew bots (summon, titles, assign, chat)
+    usage: /crew <summon|dismiss|list|title|skin|assign|stop|home|say|broadcast|reload>
+    permission: aibots.crew
+    aliases: [aibot, aicrew]
   aibot:
-    description: Talk to an AI bot
-    usage: /aibot <botname> <message>
-    permission: aibots.use
-    permission-message: You don't have permission to use AI bots!
+    description: Legacy alias for /crew
+    usage: /aibot <summon|dismiss|list|...>
+    permission: aibots.crew
+
+permissions:
+  aibots.crew:
+    description: Use AI crew commands
+    default: true
+  aibots.admin:
+    description: Admin crew operations (reload, dismiss others)
+    default: op

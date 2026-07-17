@@ -1,16 +1,33 @@
 lm-studio:
   base-url: "http://dadsbox.local:1234/v1"
+  # Leave empty to use the first model reported by LM Studio
   model: "llama-3.2-8x3b-moe-dark-champion-instruct-uncensored-abliterated-18.4b"
+  timeout-seconds: 60
+  max-tokens: 400
+  temperature: 0.7
 
-bots:
-  count: 4
-  names:
-    - BuilderBot
-    - ExplorerBot
-    - HelperBot
-    - FighterBot
-  personalities:
-    - "You are an expert Minecraft builder who loves creating cool structures and redstone."
-    - "You are a brave explorer who loves caves, resources, and telling adventure stories."
-    - "You are a helpful assistant who gives tips and helps with crafting and survival."
-    - "You are a strong fighter who protects the base and loves PvP."
+crew:
+  max-bots-per-player: 6
+  default-skin: "Steve"
+  tick-interval: 20
+  chat-mention-enabled: true
+  # Show [Title] on nameplate
+  show-title-on-nameplate: true
+
+titles:
+  scavenger:
+    display: "Scavenger"
+    color: "GOLD"
+    personality: "You scavenge resources, fill chests, and expand storage when full. You help teammates who need materials."
+  warrior:
+    display: "Warrior"
+    color: "RED"
+    personality: "You protect the base, fight hostiles, and request gear from scavengers when needed."
+  builder:
+    display: "Builder"
+    color: "AQUA"
+    personality: "You construct buildings and structures. You request blocks from scavengers when short on materials."
+  farmer:
+    display: "Farmer"
+    color: "GREEN"
+    personality: "You farm crops, replant fields, and supply food to the crew."
