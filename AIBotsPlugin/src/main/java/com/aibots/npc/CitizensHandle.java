@@ -190,9 +190,61 @@ public final class CitizensHandle implements NpcHandle {
     @Override
     public void destroy() {
         try {
-            npc.getClass().getMethod("destroy").invoke(npc);
+            // Despawn entity first (API varies by Citizens build)
+            try {
+                Class<?> reason = Class.forName("net.citizensnpcs.api.event.DespawnReason");
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                Object pluginReason = Enum.valueOf((Class<Enum>) reason.asSubclass(Enum.class), "PLUGIN");
+                Method despawn = npc.getClass().getMethod("despawn", reason);
+                despawn.invoke(npc, pluginReason);
+            } catch (Throwable ignored) {
+                tryInvoke(npc, "despawn", new Class[]{});
+            }
+            // destroy() removes from world + registry when possible
+            try {
+                npc.getClass().getMethod("destroy").invoke(npc);
+            } catch (NoSuchMethodException e) {
+                // fallback: deregister
+                Class<?> api = Class.forName("net.citizensnpcs.api.CitizensAPI");
+                Object registry = api.getMethod("getNPCRegistry").invoke(null);
+                registry.getClass().getMethod("deregister", npc.getClass().getInterfaces().length > 0
+                        ? Class.forName("net.citizensnpcs.api.npc.NPC")
+                        : npc.getClass()).invoke(registry, npc);
+            }
+            // Always try registry.deregister as belt-and-suspenders
+            try {
+                Class<?> api = Class.forName("net.citizensnpcs.api.CitizensAPI");
+                Object registry = api.getMethod("getNPCRegistry").invoke(null);
+                Class<?> npcIface = Class.forName("net.citizensnpcs.api.npc.NPC");
+                registry.getClass().getMethod("deregister", npcIface).invoke(registry, npc);
+            } catch (Throwable ignored) {
+            }
+            LOG.info("[AIBots] Destroyed Citizens NPC id=" + id);
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "[AIBots] Failed to destroy Citizens NPC: " + t.getMessage());
+            LOG.log(Level.WARNING, "[AIBots] Failed to destroy Citizens NPC: " + t.getMessage(), t);
+        }
+    }
+
+    /** Force-remove a Citizens NPC by numeric id (orphans after failed dismiss). */
+    public static boolean destroyById(int npcId) {
+        try {
+            Class<?> api = Class.forName("net.citizensnpcs.api.CitizensAPI");
+            Object registry = api.getMethod("getNPCRegistry").invoke(null);
+            Object npc = registry.getClass().getMethod("getById", int.class).invoke(registry, npcId);
+            if (npc == null) {
+                return false;
+            }
+            try {
+                npc.getClass().getMethod("destroy").invoke(npc);
+            } catch (Throwable t) {
+                Class<?> npcIface = Class.forName("net.citizensnpcs.api.npc.NPC");
+                registry.getClass().getMethod("deregister", npcIface).invoke(registry, npc);
+            }
+            LOG.info("[AIBots] Force-destroyed Citizens NPC id=" + npcId);
+            return true;
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "[AIBots] destroyById(" + npcId + ") failed: " + t.getMessage());
+            return false;
         }
     }
 

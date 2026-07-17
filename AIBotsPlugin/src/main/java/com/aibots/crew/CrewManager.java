@@ -185,14 +185,37 @@ public class CrewManager {
     public boolean dismiss(CrewBot bot) {
         learning.observe(bot, "dismiss", "Dismissed from world", true, null);
         learning.save();
+        // Despawn body; also force-remove Citizens id so orphans do not remain in saves.yml
+        Integer citizensId = bot.getCitizensNpcId();
         npcService.despawn(bot.getId());
+        if (citizensId != null) {
+            com.aibots.npc.CitizensHandle.destroyById(citizensId);
+        }
         botsById.remove(bot.getId());
         nameIndex.remove(bot.getName().toLowerCase(Locale.ROOT));
-        // Keep learning.yml history keyed by id for possible re-summon knowledge reuse — optional cleanup:
-        // learning.removeBrain(bot.getId());
+        bot.setCitizensNpcId(null);
         bot.setStatus(BotStatus.DISMISSED);
         save();
         return true;
+    }
+
+    /**
+     * Remove every crew bot and try to wipe leftover Citizens NPCs whose names look like ours.
+     */
+    public int purgeAll() {
+        int n = 0;
+        for (CrewBot bot : List.copyOf(botsById.values())) {
+            dismiss(bot);
+            n++;
+        }
+        // Sweep common orphan ids created by earlier versions
+        for (int id = 0; id <= 32; id++) {
+            if (com.aibots.npc.CitizensHandle.destroyById(id)) {
+                n++;
+            }
+        }
+        save();
+        return n;
     }
 
     public void setTitle(CrewBot bot, BotTitle title) {
