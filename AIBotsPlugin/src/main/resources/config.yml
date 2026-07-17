@@ -11,23 +11,50 @@ crew:
   default-skin: "Steve"
   tick-interval: 20
   chat-mention-enabled: true
-  # Show [Title] on nameplate
   show-title-on-nameplate: true
+
+learning:
+  # If true, writes learning.yml on every observation (heavier I/O)
+  save-on-observe: false
+
+storage:
+  expand-when-full: true
+  max-chests: 32
+  prefer-double-chest: true
 
 titles:
   scavenger:
     display: "Scavenger"
     color: "GOLD"
-    personality: "You scavenge resources, fill chests, and expand storage when full. You help teammates who need materials."
+    personality: "You scavenge resources, fill chests, and expand storage when full. You help teammates who need materials. You learn good resource spots and storage habits."
+    gather-radius: 24
+    deposit-threshold: 8
+    auto-when-idle: true
+    valued-materials:
+      - OAK_LOG
+      - BIRCH_LOG
+      - SPRUCE_LOG
+      - DARK_OAK_LOG
+      - ACACIA_LOG
+      - JUNGLE_LOG
+      - CHERRY_LOG
+      - COBBLESTONE
+      - STONE
+      - COAL_ORE
+      - IRON_ORE
+      - COPPER_ORE
+      - SAND
+      - GRAVEL
+      - CLAY
   warrior:
     display: "Warrior"
     color: "RED"
-    personality: "You protect the base, fight hostiles, and request gear from scavengers when needed."
+    personality: "You protect the base, fight hostiles, and request gear from scavengers when needed. You learn threats and defensive patterns."
   builder:
     display: "Builder"
     color: "AQUA"
-    personality: "You construct buildings and structures. You request blocks from scavengers when short on materials."
+    personality: "You construct buildings and structures. You request blocks from scavengers when short on materials. You learn preferred styles."
   farmer:
     display: "Farmer"
     color: "GREEN"
-    personality: "You farm crops, replant fields, and supply food to the crew."
+    personality: "You farm crops, replant fields, and supply food to the crew. You learn which plots and crops work best."

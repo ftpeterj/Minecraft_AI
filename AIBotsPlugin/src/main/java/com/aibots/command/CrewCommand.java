@@ -55,6 +55,9 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                 case "home" -> home(sender, args);
                 case "say", "talk" -> say(sender, args);
                 case "broadcast", "bc" -> broadcast(sender, args);
+                case "teach", "learn" -> teach(sender, args);
+                case "memory", "brain" -> memory(sender, args);
+                case "share" -> share(sender, args);
                 case "reload" -> reload(sender);
                 case "info" -> info(sender, args);
                 default -> sender.sendMessage(ChatColor.YELLOW + "Unknown subcommand. Try /" + label + " help");
@@ -80,8 +83,12 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " home <name>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " say <name> <message...>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " broadcast <message...>");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " teach <name> [share] <fact...>");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " memory <name>");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " share <from> <to> <topic...>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " info <name>");
         sender.sendMessage(ChatColor.GRAY + "Titles: " + BotTitle.usageList());
+        sender.sendMessage(ChatColor.GRAY + "All bots learn from teaching, chat, and experience (saved in learning.yml).");
         sender.sendMessage(ChatColor.GRAY + "Backend: " + (crew.getNpcService().usingCitizens() ? "Citizens" : "ArmorStand fallback"));
     }
 
@@ -226,6 +233,56 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         crew.broadcastToOwned(player, msg);
     }
 
+    private void teach(CommandSender sender, String[] args) {
+        if (args.length < 3) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew teach <name> [share] <fact...>");
+            return;
+        }
+        CrewBot bot = requireBot(sender, args[1], true);
+        boolean share = args[2].equalsIgnoreCase("share");
+        int start = share ? 3 : 2;
+        if (args.length <= start) {
+            sender.sendMessage(ChatColor.RED + "Provide a fact to teach.");
+            return;
+        }
+        String fact = String.join(" ", Arrays.copyOfRange(args, start, args.length));
+        String source = sender instanceof Player p ? p.getName() : "console";
+        crew.teach(bot, fact, source, share);
+        sender.sendMessage(ChatColor.GREEN + bot.getName() + " learned"
+                + (share ? " (shared with crew)" : "") + ": " + ChatColor.WHITE + fact);
+        crew.talk(bot, "I just taught you: " + fact + ". Confirm you remember it.", sender);
+    }
+
+    private void memory(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew memory <name>");
+            return;
+        }
+        CrewBot bot = requireBot(sender, args[1], false);
+        sender.sendMessage(ChatColor.GOLD + "=== " + bot.getName() + " memory ===");
+        for (String line : crew.getLearning().memoryLines(bot, 20)) {
+            sender.sendMessage(ChatColor.GRAY + line);
+        }
+        if (!crew.getLearning().sharedFacts().isEmpty()) {
+            sender.sendMessage(ChatColor.GOLD + "Crew shared:");
+            crew.getLearning().sharedFacts().stream().limit(10).forEach(f ->
+                    sender.sendMessage(ChatColor.DARK_AQUA + "  " + f.promptLine()));
+        }
+    }
+
+    private void share(CommandSender sender, String[] args) {
+        if (args.length < 4) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew share <from> <to> <topic...>");
+            return;
+        }
+        CrewBot from = requireBot(sender, args[1], true);
+        CrewBot to = requireBot(sender, args[2], true);
+        String topic = String.join(" ", Arrays.copyOfRange(args, 3, args.length));
+        crew.shareKnowledge(from, to, topic);
+        sender.sendMessage(ChatColor.GREEN + from.getName() + " shared knowledge with " + to.getName() + ".");
+        crew.talk(to, from.getName() + " just taught you about: " + topic + ". Acknowledge briefly.", sender);
+    }
+
     private void info(CommandSender sender, String[] args) {
         if (args.length < 2) {
             sender.sendMessage(ChatColor.RED + "Usage: /crew info <name>");
@@ -240,7 +297,11 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.YELLOW + "Citizens id: " + bot.getCitizensNpcId());
         NpcHandle body = crew.bodyOf(bot);
         sender.sendMessage(ChatColor.YELLOW + "Body: " + (body == null ? "none" : body.backend() + " valid=" + body.isValid()));
-        sender.sendMessage(ChatColor.DARK_GRAY + "Memory: " + bot.memorySummary());
+        sender.sendMessage(ChatColor.DARK_GRAY + "Short memory: " + bot.memorySummary());
+        long facts = crew.getLearning().brain(bot).facts().size();
+        long eps = crew.getLearning().brain(bot).recentEpisodes(100).size();
+        sender.sendMessage(ChatColor.YELLOW + "Learned facts: " + facts + " | recent episodes: " + eps);
+        sender.sendMessage(ChatColor.GRAY + "Use /crew memory " + bot.getName() + " for details.");
     }
 
     private void reload(CommandSender sender) {
@@ -268,12 +329,14 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             return filter(args[0], List.of(
                     "help", "summon", "dismiss", "list", "title", "skin",
-                    "assign", "stop", "home", "say", "broadcast", "info", "reload"
+                    "assign", "stop", "home", "say", "broadcast", "teach", "memory",
+                    "share", "info", "reload"
             ));
         }
         if (args.length == 2) {
             String sub = args[0].toLowerCase(Locale.ROOT);
-            if (List.of("dismiss", "title", "skin", "assign", "stop", "home", "say", "info").contains(sub)) {
+            if (List.of("dismiss", "title", "skin", "assign", "stop", "home", "say", "info",
+                    "teach", "memory", "share").contains(sub)) {
                 return filter(args[1], crew.allBots().stream().map(CrewBot::getName).collect(Collectors.toList()));
             }
             if (sub.equals("summon")) {
@@ -287,6 +350,12 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             }
             if (sub.equals("skin")) {
                 return filter(args[2], List.of("Steve", "Alex"));
+            }
+            if (sub.equals("teach")) {
+                return filter(args[2], List.of("share"));
+            }
+            if (sub.equals("share")) {
+                return filter(args[2], crew.allBots().stream().map(CrewBot::getName).collect(Collectors.toList()));
             }
         }
         if (args.length == 4 && args[0].equalsIgnoreCase("summon")) {

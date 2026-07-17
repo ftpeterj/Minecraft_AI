@@ -41,7 +41,7 @@ public class AIBotsPlugin extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(new ChatListener(this, crewManager), this);
 
-        getLogger().info("AIBots crew Phase 1 enabled. Use /crew help");
+        getLogger().info("AIBots crew Phase 1+2 enabled (learning + scavenger). Use /crew help");
     }
 
     private void registerCommand(String name, CrewCommand executor) {

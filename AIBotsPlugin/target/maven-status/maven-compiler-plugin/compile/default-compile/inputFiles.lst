@@ -4,6 +4,11 @@ C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\BotStatus.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\BotTitle.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\CrewBot.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\crew\CrewManager.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\learn\BotBrain.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\learn\Episode.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\learn\LearnedFact.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\learn\LearningService.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\learn\SkillStat.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\listener\ChatListener.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\llm\LMStudioClient.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\llm\RolePrompts.java
@@ -11,3 +16,5 @@ C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\ArmorStandHandle.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\CitizensHandle.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\NpcHandle.java
 C:\Projects\AIBotsPlugin\src\main\java\com\aibots\npc\NpcService.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\skill\ScavengeSkill.java
+C:\Projects\AIBotsPlugin\src\main\java\com\aibots\storage\ChestNetwork.java
