@@ -68,7 +68,7 @@ public class NpcService {
             return;
         }
         if (citizens && bot.getCitizensNpcId() != null) {
-            CitizensHandle existing = CitizensHandle.attachExisting(bot.getCitizensNpcId());
+            CitizensHandle existing = CitizensHandle.attachExisting(bot.getCitizensNpcId(), plugin);
             if (existing != null && existing.isValid()) {
                 existing.setNameplate(coloredNameplate(bot));
                 existing.setSkin(bot.getSkin());
