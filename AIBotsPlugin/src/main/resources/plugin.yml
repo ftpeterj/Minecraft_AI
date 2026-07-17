@@ -1,0 +1,10 @@
+name: AIBots
+version: 1.0
+main: com.aibots.AIBotsPlugin
+api-version: 1.21
+commands:
+  aibot:
+    description: Talk to an AI bot
+    usage: /aibot <botname> <message>
+    permission: aibots.use
+    permission-message: You don't have permission to use AI bots!

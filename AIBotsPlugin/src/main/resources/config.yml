@@ -1,0 +1,16 @@
+lm-studio:
+  base-url: "http://dadsbox.local:1234/v1"
+  model: "llama-3.2-8x3b-moe-dark-champion-instruct-uncensored-abliterated-18.4b"
+
+bots:
+  count: 4
+  names:
+    - BuilderBot
+    - ExplorerBot
+    - HelperBot
+    - FighterBot
+  personalities:
+    - "You are an expert Minecraft builder who loves creating cool structures and redstone."
+    - "You are a brave explorer who loves caves, resources, and telling adventure stories."
+    - "You are a helpful assistant who gives tips and helps with crafting and survival."
+    - "You are a strong fighter who protects the base and loves PvP."
