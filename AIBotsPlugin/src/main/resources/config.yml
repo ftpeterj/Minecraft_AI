@@ -8,7 +8,8 @@ lm-studio:
 
 crew:
   max-bots-per-player: 6
-  default-skin: "Steve"
+  # "owner" = use summoner's Minecraft username skin (recommended)
+  default-skin: "owner"
   tick-interval: 20
   chat-mention-enabled: true
   show-title-on-nameplate: true
@@ -29,7 +30,8 @@ titles:
     personality: "You scavenge resources, fill chests, and expand storage when full. You help teammates who need materials. You learn good resource spots and storage habits."
     gather-radius: 24
     deposit-threshold: 8
-    auto-when-idle: true
+    # false = only gather after /crew assign <name> gather ...
+    auto-when-idle: false
     valued-materials:
       - OAK_LOG
       - BIRCH_LOG

@@ -5,6 +5,7 @@ import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.lang.reflect.Method;
 import java.util.logging.Level;
@@ -29,38 +30,60 @@ public final class CitizensHandle implements NpcHandle {
         return p != null && p.isEnabled();
     }
 
-    public static CitizensHandle spawn(Location loc, String nameplate, String skin) {
+    /**
+     * @param bareName plain NPC name used for registry (no color codes — those break skins)
+     * @param nameplate display name with optional colors
+     * @param skin Mojang username to pull skin from (e.g. owner name, Steve, Notch)
+     */
+    public static CitizensHandle spawn(Location loc, String bareName, String nameplate, String skin, JavaPlugin plugin) {
         try {
             Class<?> api = Class.forName("net.citizensnpcs.api.CitizensAPI");
             Method getRegistry = api.getMethod("getNPCRegistry");
             Object registry = getRegistry.invoke(null);
 
-            Method createNPC = registry.getClass().getMethod("createNPC", EntityType.class, String.class);
-            Object npc = createNPC.invoke(registry, EntityType.PLAYER, stripColor(nameplate));
+            String regName = stripColor(bareName == null || bareName.isBlank() ? "CrewBot" : bareName);
+            if (regName.length() > 16) {
+                regName = regName.substring(0, 16);
+            }
 
-            Method setName = npc.getClass().getMethod("setName", String.class);
-            setName.invoke(npc, nameplate);
+            Method createNPC = registry.getClass().getMethod("createNPC", EntityType.class, String.class);
+            Object npc = createNPC.invoke(registry, EntityType.PLAYER, regName);
+
+            // Persist + look like a real player
+            trySetData(npc, "protected", false);
+            tryInvoke(npc, "setProtected", new Class[]{boolean.class}, false);
 
             Method spawn = npc.getClass().getMethod("spawn", Location.class);
             spawn.invoke(npc, loc);
 
-            applySkin(npc, skin);
-
             Method getId = npc.getClass().getMethod("getId");
             Integer id = (Integer) getId.invoke(npc);
+            CitizensHandle handle = new CitizensHandle(npc, id);
 
-            // Look like a player, protected from default despawn
-            try {
-                Method setProtected = npc.getClass().getMethod("setProtected", boolean.class);
-                setProtected.invoke(npc, false);
-            } catch (NoSuchMethodException ignored) {
+            // Skin must be applied after spawn; re-apply a few ticks later so Mojang fetch can land
+            final String skinName = normalizeSkin(skin);
+            final String plate = nameplate != null ? nameplate : regName;
+            applySkin(npc, skinName);
+            handle.setNameplate(plate);
+
+            if (plugin != null) {
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    applySkin(npc, skinName);
+                    handle.setNameplate(plate);
+                }, 10L);
+                Bukkit.getScheduler().runTaskLater(plugin, () -> applySkin(npc, skinName), 40L);
             }
 
-            return new CitizensHandle(npc, id);
+            return handle;
         } catch (Throwable t) {
             LOG.log(Level.WARNING, "[AIBots] Failed to spawn Citizens NPC: " + t.getMessage(), t);
             return null;
         }
+    }
+
+    /** Back-compat helper */
+    public static CitizensHandle spawn(Location loc, String nameplate, String skin) {
+        return spawn(loc, stripColor(nameplate), nameplate, skin, null);
     }
 
     public static CitizensHandle attachExisting(int npcId) {
@@ -78,28 +101,79 @@ public final class CitizensHandle implements NpcHandle {
         }
     }
 
-    private static void applySkin(Object npc, String skin) {
+    private static String normalizeSkin(String skin) {
         if (skin == null || skin.isBlank()) {
+            return "Steve";
+        }
+        String s = skin.trim();
+        // "Steve"/"Alex" classic names sometimes fail Mojang lookup — map to known working profiles
+        if (s.equalsIgnoreCase("Steve")) {
+            return "MHF_Steve";
+        }
+        if (s.equalsIgnoreCase("Alex")) {
+            return "MHF_Alex";
+        }
+        return s;
+    }
+
+    private static void applySkin(Object npc, String skin) {
+        if (skin == null || skin.isBlank() || npc == null) {
             return;
         }
+        String skinName = normalizeSkin(skin);
         try {
-            // NPC.getOrAddTrait(SkinTrait.class).setSkinName(skin)
             Class<?> skinTraitClass = Class.forName("net.citizensnpcs.trait.SkinTrait");
             Method getOrAddTrait = npc.getClass().getMethod("getOrAddTrait", Class.class);
             Object trait = getOrAddTrait.invoke(npc, skinTraitClass);
 
-            // Prefer setSkinName
+            // Encourage live Mojang fetch / updates
+            tryInvoke(trait, "setFetchDefaultSkins", new Class[]{boolean.class}, true);
+            tryInvoke(trait, "setShouldUpdateSkins", new Class[]{boolean.class}, true);
+
+            // Force skin name with update flag when available
+            boolean applied = false;
             try {
-                Method setSkinName = trait.getClass().getMethod("setSkinName", String.class);
-                setSkinName.invoke(trait, skin);
-                return;
+                Method setSkinName2 = trait.getClass().getMethod("setSkinName", String.class, boolean.class);
+                setSkinName2.invoke(trait, skinName, true);
+                applied = true;
             } catch (NoSuchMethodException ignored) {
             }
+            if (!applied) {
+                Method setSkinName = trait.getClass().getMethod("setSkinName", String.class);
+                setSkinName.invoke(trait, skinName);
+            }
 
-            Method setSkinName2 = trait.getClass().getMethod("setSkinName", String.class, boolean.class);
-            setSkinName2.invoke(trait, skin, true);
+            // Some builds expose setSkinPersistent
+            tryInvoke(trait, "setSkinPersistent", new Class[]{String.class, String.class, String.class},
+                    null); // no-op if wrong signature
+
+            LOG.info("[AIBots] Applied Citizens skin '" + skinName + "'");
         } catch (Throwable t) {
-            LOG.log(Level.FINE, "[AIBots] Could not apply skin '" + skin + "': " + t.getMessage());
+            LOG.log(Level.WARNING, "[AIBots] Could not apply skin '" + skinName + "': " + t.getMessage());
+        }
+    }
+
+    private static void tryInvoke(Object target, String method, Class<?>[] types, Object... args) {
+        try {
+            Method m = target.getClass().getMethod(method, types);
+            m.invoke(target, args);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void trySetData(Object npc, String key, Object value) {
+        try {
+            // npc.data().setPersistent(key, value) — best-effort
+            Method data = npc.getClass().getMethod("data");
+            Object mem = data.invoke(npc);
+            try {
+                Method set = mem.getClass().getMethod("setPersistent", String.class, Object.class);
+                set.invoke(mem, key, value);
+            } catch (NoSuchMethodException e) {
+                Method set = mem.getClass().getMethod("set", String.class, Object.class);
+                set.invoke(mem, key, value);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -107,7 +181,7 @@ public final class CitizensHandle implements NpcHandle {
         if (s == null) {
             return "Bot";
         }
-        return s.replaceAll("§[0-9a-fk-or]", "");
+        return s.replaceAll("§[0-9a-fk-orA-FK-ORxX]", "").replaceAll("&#[0-9a-fA-F]{6}", "").trim();
     }
 
     @Override
@@ -175,6 +249,7 @@ public final class CitizensHandle implements NpcHandle {
     @Override
     public void setNameplate(String nameplate) {
         try {
+            // Keep registry name plain; use hologram/name for display
             Method setName = npc.getClass().getMethod("setName", String.class);
             setName.invoke(npc, nameplate);
             if (isValid()) {

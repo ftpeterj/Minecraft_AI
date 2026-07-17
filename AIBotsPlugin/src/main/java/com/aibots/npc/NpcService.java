@@ -46,7 +46,8 @@ public class NpcService {
         NpcHandle handle = null;
 
         if (citizens) {
-            handle = CitizensHandle.spawn(location, plate, bot.getSkin());
+            // Bare name for Citizens registry; colored plate for display; skin separate
+            handle = CitizensHandle.spawn(location, bot.getName(), plate, bot.getSkin(), plugin);
         }
         if (handle == null) {
             handle = ArmorStandHandle.spawn(location, plate, bot.getSkin());
@@ -56,6 +57,7 @@ public class NpcService {
         bot.setCitizensNpcId(handle.getCitizensId());
         bot.setLastLocation(location);
         log.info("Spawned " + bot.getName() + " via " + handle.backend()
+                + " skin=" + bot.getSkin()
                 + (handle.getCitizensId() != null ? " id=" + handle.getCitizensId() : ""));
         return handle;
     }

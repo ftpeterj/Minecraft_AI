@@ -113,28 +113,28 @@ public class ScavengeSkill {
             return;
         }
 
-        // Ensure storage near home
         Location home = bot.getHome() != null ? bot.getHome() : loc;
+
+        // Only act when given an explicit gather-style order (no freelancing)
+        String order = bot.getCurrentOrder();
+        boolean auto = plugin.getConfig().getBoolean("titles.scavenger.auto-when-idle", false);
+        boolean ordered = order != null && looksLikeGather(order) && bot.getStatus() == BotStatus.BUSY;
+        boolean shouldGather = ordered || (auto && bot.getStatus() == BotStatus.IDLE);
+
+        if (!shouldGather) {
+            return;
+        }
+
+        // Storage only when actually working
         chests.ensureStorageNear(home);
 
         int carried = carryCount.getOrDefault(bot.getId(), 0);
         int depositThreshold = plugin.getConfig().getInt("titles.scavenger.deposit-threshold", 8);
         int radius = plugin.getConfig().getInt("titles.scavenger.gather-radius", 24);
 
-        // Deposit if carrying enough or inventory-like threshold
+        // Deposit if carrying enough
         if (carried >= depositThreshold) {
             deposit(bot, body, loc);
-            return;
-        }
-
-        // Only actively gather when BUSY or has gather-like order, or IDLE auto-scavenge
-        boolean auto = plugin.getConfig().getBoolean("titles.scavenger.auto-when-idle", true);
-        String order = bot.getCurrentOrder();
-        boolean shouldGather = bot.getStatus() == BotStatus.BUSY
-                || (order != null && looksLikeGather(order))
-                || (auto && bot.getStatus() == BotStatus.IDLE);
-
-        if (!shouldGather) {
             return;
         }
 

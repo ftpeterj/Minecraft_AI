@@ -145,11 +145,21 @@ public class CrewManager {
             throw new IllegalArgumentException("You already have " + max + " bots (max).");
         }
 
-        String skin = (skinOrNull == null || skinOrNull.isBlank())
-                ? plugin.getConfig().getString("crew.default-skin", "Steve")
-                : skinOrNull.trim();
+        // Prefer owner's real skin so avatars look correct (Steve/Alex often fail Mojang lookup)
+        String configuredDefault = plugin.getConfig().getString("crew.default-skin", "owner");
+        String skin;
+        if (skinOrNull != null && !skinOrNull.isBlank()) {
+            skin = skinOrNull.trim();
+        } else if (configuredDefault == null || configuredDefault.isBlank()
+                || configuredDefault.equalsIgnoreCase("owner")
+                || configuredDefault.equalsIgnoreCase("self")) {
+            skin = owner.getName();
+        } else {
+            skin = configuredDefault.trim();
+        }
 
         CrewBot bot = new CrewBot(UUID.randomUUID(), clean, title, skin, owner.getUniqueId());
+        bot.setStatus(BotStatus.IDLE);
         Location spawnAt = owner.getLocation().add(owner.getLocation().getDirection().normalize().multiply(2)).add(0, 0.1, 0);
         bot.setHome(owner.getLocation());
         bot.setLastLocation(spawnAt);
@@ -164,9 +174,7 @@ public class CrewManager {
         learning.observe(bot, "summon", "Summoned into the world", true, title.name());
 
         npcService.spawnFor(bot, spawnAt);
-        if (title == BotTitle.SCAVENGER) {
-            chestNetwork.ensureStorageNear(bot.getHome());
-        }
+        // Do NOT auto-place chests or start scavenging on summon — wait for /crew assign
         save();
         learning.save();
 
