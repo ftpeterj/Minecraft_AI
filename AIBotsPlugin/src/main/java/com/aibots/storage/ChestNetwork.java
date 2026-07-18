@@ -140,8 +140,7 @@ public class ChestNetwork {
     public Location ensureStorageNear(Location home) {
         pruneInvalid();
         if (!chests.isEmpty()) {
-            // Try to pair any existing single chests that sit adjacent
-            reconnectAdjacentSingles();
+            // Do NOT reconnect every call — that rewrote chests every scavenger tick and stalled bots
             return nearestChest(home);
         }
         if (home == null || home.getWorld() == null) {
@@ -463,15 +462,12 @@ public class ChestNetwork {
             if (done.contains(key)) {
                 continue;
             }
-            // Pair with any cardinal neighbor chest (even if already typed wrong)
-            Block n = null;
-            for (BlockFace face : new BlockFace[]{BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
-                Block cand = b.getRelative(face);
-                if (cand.getType() == Material.CHEST) {
-                    n = cand;
-                    break;
-                }
+            // Only touch singles that still need a partner — never rewrite working doubles every tick
+            if (!isSingleChest(b)) {
+                done.add(key);
+                continue;
             }
+            Block n = findAdjacentSingleChest(b);
             if (n != null) {
                 placeDoubleChest(b, n);
                 registerChest(n.getLocation());
@@ -481,7 +477,7 @@ public class ChestNetwork {
             }
         }
         if (changed) {
-            plugin.getLogger().info("[AIBots] Reconnected adjacent chests into double chests.");
+            plugin.getLogger().info("[AIBots] Reconnected adjacent single chests into double chests.");
             save();
         }
     }

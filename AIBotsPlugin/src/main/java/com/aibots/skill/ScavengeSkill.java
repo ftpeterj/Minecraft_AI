@@ -163,12 +163,23 @@ public class ScavengeSkill {
             return;
         }
 
-        // Body language: face block + swing while chopping/mining
+        // Face the block from current footing (do NOT teleport into the log)
         Entity ent = body.getEntity();
         if (ent instanceof LivingEntity living) {
-            Location look = tloc.clone();
-            look.setDirection(tloc.toVector().subtract(living.getLocation().toVector()));
-            living.teleport(look);
+            Location stand = living.getLocation().clone();
+            Location aim = target.getLocation().add(0.5, 0.6, 0.5);
+            org.bukkit.util.Vector dir = aim.toVector().subtract(living.getEyeLocation().toVector());
+            if (dir.lengthSquared() > 1.0e-6) {
+                stand.setDirection(dir);
+                // Clamp pitch so head isn't jammed into the ground
+                if (stand.getPitch() > 35f) {
+                    stand.setPitch(35f);
+                }
+                if (stand.getPitch() < -25f) {
+                    stand.setPitch(-25f);
+                }
+                living.teleport(stand);
+            }
             living.swingMainHand();
         }
 

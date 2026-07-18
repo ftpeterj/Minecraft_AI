@@ -96,13 +96,21 @@ public final class VillagerHandle implements NpcHandle {
     @Override
     public void teleport(Location location) {
         if (isValid() && location != null) {
-            // Face movement direction if possible
+            Location dest = location.clone();
             Location from = villager.getLocation();
-            if (from.getWorld() != null && location.getWorld() != null) {
-                location = location.clone();
-                location.setDirection(location.toVector().subtract(from.toVector()));
+            if (from.getWorld() != null && dest.getWorld() != null) {
+                // Yaw only — keep head level while walking (no staring at feet)
+                double dx = dest.getX() - from.getX();
+                double dz = dest.getZ() - from.getZ();
+                if (dx * dx + dz * dz > 0.0001) {
+                    float yaw = (float) (Math.toDegrees(Math.atan2(-dx, dz)));
+                    dest.setYaw(yaw);
+                } else {
+                    dest.setYaw(from.getYaw());
+                }
+                dest.setPitch(0f);
             }
-            villager.teleport(location);
+            villager.teleport(dest);
         }
     }
 
