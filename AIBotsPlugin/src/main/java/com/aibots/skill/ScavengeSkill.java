@@ -296,8 +296,8 @@ public class ScavengeSkill {
         }
         double step = Math.min(1.2, dist);
         next.add(dx / dist * step, 0, dz / dist * step);
-        // keep on ground
-        next.setY(from.getWorld().getHighestBlockYAt(next) + 1);
+        // keep on ground (includes y-offset so NPCs don't sink)
+        next = com.aibots.npc.NpcLocations.standOnSurface(next, plugin);
         // face target
         next.setDirection(target.toVector().subtract(from.toVector()));
         body.teleport(next);

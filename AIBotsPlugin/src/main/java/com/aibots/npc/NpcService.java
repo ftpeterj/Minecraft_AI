@@ -42,22 +42,35 @@ public class NpcService {
     public NpcHandle spawnFor(CrewBot bot, Location location) {
         despawn(bot.getId());
 
+        // Snap to surface + y-offset (Citizens player NPCs often clip into the floor)
+        Location at = NpcLocations.standOnSurface(location, plugin);
+
         String plate = coloredNameplate(bot);
         NpcHandle handle = null;
 
         if (citizens) {
             // Bare name for Citizens registry; colored plate for display; skin separate
-            handle = CitizensHandle.spawn(location, bot.getName(), plate, bot.getSkin(), plugin);
+            handle = CitizensHandle.spawn(at, bot.getName(), plate, bot.getSkin(), plugin);
         }
         if (handle == null) {
-            handle = ArmorStandHandle.spawn(location, plate, bot.getSkin());
+            handle = ArmorStandHandle.spawn(at, plate, bot.getSkin());
         }
+
+        // Re-assert footing after spawn (Citizens sometimes drops them)
+        final Location footing = at.clone();
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            NpcHandle h = handles.get(bot.getId());
+            if (h != null && h.isValid()) {
+                h.teleport(footing);
+            }
+        }, 5L);
 
         handles.put(bot.getId(), handle);
         bot.setCitizensNpcId(handle.getCitizensId());
-        bot.setLastLocation(location);
+        bot.setLastLocation(at);
         log.info("Spawned " + bot.getName() + " via " + handle.backend()
                 + " skin=" + bot.getSkin()
+                + " y=" + at.getY()
                 + (handle.getCitizensId() != null ? " id=" + handle.getCitizensId() : ""));
         return handle;
     }

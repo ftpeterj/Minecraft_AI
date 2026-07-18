@@ -12,6 +12,8 @@ crew:
   default-skin: "owner"
   # citizens = full player model (needs working skins); armorstand = body+player head (reliable face)
   avatar-mode: citizens
+  # Extra blocks upward — Citizens player NPCs often sit 1 block in the floor
+  y-offset: 1.0
   tick-interval: 20
   chat-mention-enabled: true
   show-title-on-nameplate: true
