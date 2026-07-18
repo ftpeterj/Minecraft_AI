@@ -59,6 +59,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                 case "memory", "brain" -> memory(sender, args);
                 case "share" -> share(sender, args);
                 case "purge" -> purge(sender);
+                case "storage", "chests" -> storage(sender, args);
                 case "reload" -> reload(sender);
                 case "info" -> info(sender, args);
                 default -> sender.sendMessage(ChatColor.YELLOW + "Unknown subcommand. Try /" + label + " help");
@@ -89,6 +90,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " share <from> <to> <topic...>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " info <name>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " purge  " + ChatColor.GRAY + "(remove all crew + orphan Citizens NPCs)");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " storage fix  " + ChatColor.GRAY + "(merge adjacent singles into double chests)");
         sender.sendMessage(ChatColor.GRAY + "Titles: " + BotTitle.usageList());
         sender.sendMessage(ChatColor.GRAY + "All bots learn from teaching, chat, and experience (saved in learning.yml).");
         sender.sendMessage(ChatColor.GRAY + "Backend: " + (crew.getNpcService().usingCitizens() ? "Citizens" : "ArmorStand fallback"));
@@ -315,6 +317,15 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.GRAY + "If a ghost remains, look at it and run: /npc remove");
     }
 
+    private void storage(CommandSender sender, String[] args) {
+        if (args.length < 2 || !args[1].equalsIgnoreCase("fix")) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew storage fix");
+            return;
+        }
+        crew.getChestNetwork().forceReconnectAll();
+        sender.sendMessage(ChatColor.GREEN + "Tried to merge adjacent network chests into double chests. Look again.");
+    }
+
     private void reload(CommandSender sender) {
         if (!sender.hasPermission("aibots.admin")) {
             sender.sendMessage(ChatColor.RED + "Admin only.");
@@ -341,7 +352,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             return filter(args[0], List.of(
                     "help", "summon", "dismiss", "list", "title", "skin",
                     "assign", "stop", "home", "say", "broadcast", "teach", "memory",
-                    "share", "info", "purge", "reload"
+                    "share", "info", "purge", "storage", "reload"
             ));
         }
         if (args.length == 2) {

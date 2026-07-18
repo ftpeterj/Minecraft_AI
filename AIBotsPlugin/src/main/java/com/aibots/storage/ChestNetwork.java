@@ -345,81 +345,78 @@ public class ChestNetwork {
     /**
      * Place two adjacent chests as a proper double-chest (shared 54-slot inventory).
      * Simply setType(CHEST) twice leaves two unconnected singles.
+     * <p>
+     * Minecraft {@code type=left|right} is relative to the chest's {@code facing}
+     * (the direction the latch points). Standing looking the same way as {@code facing}:
+     * left half = LEFT, right half = RIGHT.
      */
     public static void placeDoubleChest(Block a, Block b) {
         if (a == null || b == null) {
             return;
         }
-        // Only horizontal adjacency
         int dx = b.getX() - a.getX();
         int dy = b.getY() - a.getY();
         int dz = b.getZ() - a.getZ();
         if (dy != 0 || Math.abs(dx) + Math.abs(dz) != 1) {
-            placeSingleChest(a, BlockFace.SOUTH);
-            placeSingleChest(b, BlockFace.SOUTH);
+            placeSingleChest(a, BlockFace.NORTH);
+            placeSingleChest(b, BlockFace.NORTH);
             return;
         }
 
-        // Facing must be perpendicular to the pair axis
-        BlockFace facing;
+        // Pair along X → face north/south; along Z → face east/west
+        final BlockFace facing = (dx != 0) ? BlockFace.NORTH : BlockFace.WEST;
+
+        // Identify west/east or north/south block
+        Block westOrNorth;
+        Block eastOrSouth;
         if (dx != 0) {
-            // side-by-side on X → face north or south
-            facing = BlockFace.SOUTH;
+            westOrNorth = a.getX() < b.getX() ? a : b; // west
+            eastOrSouth = a.getX() < b.getX() ? b : a; // east
         } else {
-            // side-by-side on Z → face east or west
-            facing = BlockFace.EAST;
+            westOrNorth = a.getZ() < b.getZ() ? a : b; // north (smaller Z)
+            eastOrSouth = a.getZ() < b.getZ() ? b : a; // south
         }
 
-        Chest.Type typeA;
-        Chest.Type typeB;
-        // LEFT/RIGHT are relative to facing (Minecraft blockstates)
-        if (facing == BlockFace.SOUTH) {
-            // looking south: west=LEFT, east=RIGHT
-            if (a.getX() < b.getX()) {
-                typeA = Chest.Type.LEFT;
-                typeB = Chest.Type.RIGHT;
-            } else {
-                typeA = Chest.Type.RIGHT;
-                typeB = Chest.Type.LEFT;
-            }
-        } else if (facing == BlockFace.NORTH) {
-            if (a.getX() < b.getX()) {
-                typeA = Chest.Type.RIGHT;
-                typeB = Chest.Type.LEFT;
-            } else {
-                typeA = Chest.Type.LEFT;
-                typeB = Chest.Type.RIGHT;
-            }
-        } else if (facing == BlockFace.EAST) {
-            // looking east: north=LEFT, south=RIGHT? → smaller Z is LEFT when facing east
-            if (a.getZ() < b.getZ()) {
-                typeA = Chest.Type.LEFT;
-                typeB = Chest.Type.RIGHT;
-            } else {
-                typeA = Chest.Type.RIGHT;
-                typeB = Chest.Type.LEFT;
-            }
-        } else { // WEST
-            if (a.getZ() < b.getZ()) {
-                typeA = Chest.Type.RIGHT;
-                typeB = Chest.Type.LEFT;
-            } else {
-                typeA = Chest.Type.LEFT;
-                typeB = Chest.Type.RIGHT;
-            }
+        Chest.Type typeWestOrNorth;
+        Chest.Type typeEastOrSouth;
+        // Facing NORTH: look north → left=west, right=east
+        // Facing SOUTH: look south → left=east, right=west
+        // Facing WEST: look west → left=south, right=north
+        // Facing EAST: look east → left=north, right=south
+        if (facing == BlockFace.NORTH) {
+            typeWestOrNorth = Chest.Type.LEFT;   // west
+            typeEastOrSouth = Chest.Type.RIGHT;  // east
+        } else if (facing == BlockFace.SOUTH) {
+            typeWestOrNorth = Chest.Type.RIGHT;  // west
+            typeEastOrSouth = Chest.Type.LEFT;   // east
+        } else if (facing == BlockFace.WEST) {
+            // westOrNorth is north, eastOrSouth is south
+            typeWestOrNorth = Chest.Type.RIGHT;  // north
+            typeEastOrSouth = Chest.Type.LEFT;   // south
+        } else { // EAST
+            typeWestOrNorth = Chest.Type.LEFT;   // north
+            typeEastOrSouth = Chest.Type.RIGHT;  // south
         }
 
-        a.setType(Material.CHEST, false);
-        b.setType(Material.CHEST, false);
+        // Clear first so clients don't keep stale single-chest states
+        westOrNorth.setType(Material.AIR, false);
+        eastOrSouth.setType(Material.AIR, false);
 
-        Chest dataA = (Chest) Material.CHEST.createBlockData();
-        Chest dataB = (Chest) Material.CHEST.createBlockData();
-        dataA.setFacing(facing);
-        dataB.setFacing(facing);
-        dataA.setType(typeA);
-        dataB.setType(typeB);
-        a.setBlockData(dataA, true);
-        b.setBlockData(dataB, true);
+        westOrNorth.setType(Material.CHEST, false);
+        eastOrSouth.setType(Material.CHEST, false);
+
+        Chest dataW = (Chest) Bukkit.createBlockData(Material.CHEST);
+        Chest dataE = (Chest) Bukkit.createBlockData(Material.CHEST);
+        dataW.setFacing(facing);
+        dataE.setFacing(facing);
+        dataW.setType(typeWestOrNorth);
+        dataE.setType(typeEastOrSouth);
+
+        westOrNorth.setBlockData(dataW, false);
+        eastOrSouth.setBlockData(dataE, false);
+        // Physics/update so inventory links and clients refresh
+        westOrNorth.getState().update(true, true);
+        eastOrSouth.getState().update(true, true);
     }
 
     public static void placeSingleChest(Block block, BlockFace facing) {
@@ -456,22 +453,48 @@ public class ChestNetwork {
     /** Fix already-placed adjacent singles into double chests (e.g. old bot placements). */
     public void reconnectAdjacentSingles() {
         boolean changed = false;
+        java.util.Set<String> done = new java.util.HashSet<>();
         for (Location loc : List.copyOf(chests)) {
             Block b = loc.getBlock();
-            if (!isSingleChest(b)) {
+            if (b.getType() != Material.CHEST) {
                 continue;
             }
-            Block n = findAdjacentSingleChest(b);
+            String key = keyOf(b);
+            if (done.contains(key)) {
+                continue;
+            }
+            // Pair with any cardinal neighbor chest (even if already typed wrong)
+            Block n = null;
+            for (BlockFace face : new BlockFace[]{BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+                Block cand = b.getRelative(face);
+                if (cand.getType() == Material.CHEST) {
+                    n = cand;
+                    break;
+                }
+            }
             if (n != null) {
                 placeDoubleChest(b, n);
                 registerChest(n.getLocation());
+                done.add(keyOf(b));
+                done.add(keyOf(n));
                 changed = true;
             }
         }
         if (changed) {
-            plugin.getLogger().info("[AIBots] Reconnected adjacent single chests into double chests.");
+            plugin.getLogger().info("[AIBots] Reconnected adjacent chests into double chests.");
             save();
         }
+    }
+
+    private static String keyOf(Block b) {
+        return b.getWorld().getName() + ":" + b.getX() + "," + b.getY() + "," + b.getZ();
+    }
+
+    /** Public for /crew storage fix */
+    public int forceReconnectAll() {
+        int before = chests.size();
+        reconnectAdjacentSingles();
+        return before;
     }
 
     private Location findPlaceSpot(Location home) {
