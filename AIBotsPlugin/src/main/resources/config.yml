@@ -10,6 +10,8 @@ crew:
   max-bots-per-player: 6
   # "owner" = use summoner's Minecraft username skin (recommended)
   default-skin: "owner"
+  # citizens = full player model (needs working skins); armorstand = body+player head (reliable face)
+  avatar-mode: citizens
   tick-interval: 20
   chat-mention-enabled: true
   show-title-on-nameplate: true
