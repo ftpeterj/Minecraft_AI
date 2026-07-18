@@ -54,6 +54,9 @@ public final class CitizensHandle implements NpcHandle {
             Method setName = npc.getClass().getMethod("setName", String.class);
             setName.invoke(npc, regName);
 
+            // Tag so purge/dismiss can always find us even if IDs drift
+            markAsCrew(npc);
+
             Method spawn = npc.getClass().getMethod("spawn", Location.class);
             spawn.invoke(npc, loc);
 
@@ -228,23 +231,141 @@ public final class CitizensHandle implements NpcHandle {
     /** Force-remove a Citizens NPC by numeric id (orphans after failed dismiss). */
     public static boolean destroyById(int npcId) {
         try {
-            Class<?> api = Class.forName("net.citizensnpcs.api.CitizensAPI");
-            Object registry = api.getMethod("getNPCRegistry").invoke(null);
+            Object registry = registry();
             Object npc = registry.getClass().getMethod("getById", int.class).invoke(registry, npcId);
             if (npc == null) {
                 return false;
             }
-            try {
-                npc.getClass().getMethod("destroy").invoke(npc);
-            } catch (Throwable t) {
-                Class<?> npcIface = Class.forName("net.citizensnpcs.api.npc.NPC");
-                registry.getClass().getMethod("deregister", npcIface).invoke(registry, npc);
-            }
+            forceDestroyNpc(registry, npc);
             LOG.info("[AIBots] Force-destroyed Citizens NPC id=" + npcId);
             return true;
         } catch (Throwable t) {
             LOG.log(Level.WARNING, "[AIBots] destroyById(" + npcId + ") failed: " + t.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Remove every Citizens NPC whose bare name matches (case-insensitive).
+     * Handles ghosts left when IDs drift after failed dismiss / double-summon.
+     */
+    public static int destroyByName(String bareName) {
+        if (bareName == null || bareName.isBlank()) {
+            return 0;
+        }
+        String want = sanitizeName(bareName).toLowerCase();
+        int removed = 0;
+        try {
+            Object registry = registry();
+            Iterable<?> all = (Iterable<?>) registry.getClass().getMethod("sorted").invoke(registry);
+            java.util.List<Object> snapshot = new java.util.ArrayList<>();
+            for (Object n : all) {
+                snapshot.add(n);
+            }
+            for (Object n : snapshot) {
+                try {
+                    String nName = String.valueOf(n.getClass().getMethod("getName").invoke(n));
+                    String bare = sanitizeName(nName).toLowerCase();
+                    boolean marked = hasMeta(n, "aibots-crew");
+                    if (bare.equals(want) || marked && bare.contains(want)) {
+                        Integer id = (Integer) n.getClass().getMethod("getId").invoke(n);
+                        forceDestroyNpc(registry, n);
+                        LOG.info("[AIBots] Destroyed Citizens NPC by name match '" + nName + "' id=" + id);
+                        removed++;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "[AIBots] destroyByName failed: " + t.getMessage());
+        }
+        return removed;
+    }
+
+    /** Remove all NPCs tagged as AIBots crew (metadata aibots-crew=true). */
+    public static int destroyAllCrewMarked() {
+        int removed = 0;
+        try {
+            Object registry = registry();
+            Iterable<?> all = (Iterable<?>) registry.getClass().getMethod("sorted").invoke(registry);
+            java.util.List<Object> snapshot = new java.util.ArrayList<>();
+            for (Object n : all) {
+                snapshot.add(n);
+            }
+            for (Object n : snapshot) {
+                if (hasMeta(n, "aibots-crew")) {
+                    try {
+                        Integer id = (Integer) n.getClass().getMethod("getId").invoke(n);
+                        forceDestroyNpc(registry, n);
+                        LOG.info("[AIBots] Destroyed marked crew NPC id=" + id);
+                        removed++;
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "[AIBots] destroyAllCrewMarked failed: " + t.getMessage());
+        }
+        return removed;
+    }
+
+    public static void markAsCrew(Object npc) {
+        if (npc == null) {
+            return;
+        }
+        try {
+            Object data = npc.getClass().getMethod("data").invoke(npc);
+            try {
+                data.getClass().getMethod("setPersistent", String.class, Object.class)
+                        .invoke(data, "aibots-crew", true);
+            } catch (NoSuchMethodException e) {
+                data.getClass().getMethod("set", String.class, Object.class)
+                        .invoke(data, "aibots-crew", true);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean hasMeta(Object npc, String key) {
+        try {
+            Object data = npc.getClass().getMethod("data").invoke(npc);
+            Object val = data.getClass().getMethod("get", String.class).invoke(data, key);
+            if (val == null) {
+                try {
+                    val = data.getClass().getMethod("get", Object.class).invoke(data, key);
+                } catch (Throwable ignored) {
+                }
+            }
+            return Boolean.TRUE.equals(val) || "true".equalsIgnoreCase(String.valueOf(val));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static Object registry() throws Exception {
+        Class<?> api = Class.forName("net.citizensnpcs.api.CitizensAPI");
+        return api.getMethod("getNPCRegistry").invoke(null);
+    }
+
+    private static void forceDestroyNpc(Object registry, Object npc) throws Exception {
+        try {
+            Class<?> reason = Class.forName("net.citizensnpcs.api.event.DespawnReason");
+            @SuppressWarnings({"unchecked", "rawtypes"})
+            Object pluginReason = Enum.valueOf((Class<Enum>) reason.asSubclass(Enum.class), "PLUGIN");
+            npc.getClass().getMethod("despawn", reason).invoke(npc, pluginReason);
+        } catch (Throwable ignored) {
+            tryInvoke(npc, "despawn", new Class[]{});
+        }
+        try {
+            npc.getClass().getMethod("destroy").invoke(npc);
+        } catch (Throwable t) {
+            Class<?> npcIface = Class.forName("net.citizensnpcs.api.npc.NPC");
+            registry.getClass().getMethod("deregister", npcIface).invoke(registry, npc);
+        }
+        try {
+            Class<?> npcIface = Class.forName("net.citizensnpcs.api.npc.NPC");
+            registry.getClass().getMethod("deregister", npcIface).invoke(registry, npc);
+        } catch (Throwable ignored) {
         }
     }
 

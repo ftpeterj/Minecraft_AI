@@ -41,6 +41,13 @@ public class NpcService {
 
     public NpcHandle spawnFor(CrewBot bot, Location location) {
         despawn(bot.getId());
+        // Kill any leftover Citizens ghosts with the same name (previous failed dismiss)
+        if (citizens) {
+            int ghosts = CitizensHandle.destroyByName(bot.getName());
+            if (ghosts > 0) {
+                log.info("Removed " + ghosts + " orphan Citizens NPC(s) named " + bot.getName());
+            }
+        }
 
         // Snap to surface + y-offset (Citizens player NPCs often clip into the floor)
         Location at = NpcLocations.standOnSurface(location, plugin);

@@ -185,34 +185,54 @@ public class CrewManager {
     public boolean dismiss(CrewBot bot) {
         learning.observe(bot, "dismiss", "Dismissed from world", true, null);
         learning.save();
-        // Despawn body; also force-remove Citizens id so orphans do not remain in saves.yml
+        String botName = bot.getName();
         Integer citizensId = bot.getCitizensNpcId();
         npcService.despawn(bot.getId());
+        // Triple cleanup: id, exact name, and any marked crew ghosts with that name
         if (citizensId != null) {
             com.aibots.npc.CitizensHandle.destroyById(citizensId);
         }
+        com.aibots.npc.CitizensHandle.destroyByName(botName);
         botsById.remove(bot.getId());
-        nameIndex.remove(bot.getName().toLowerCase(Locale.ROOT));
+        nameIndex.remove(botName.toLowerCase(Locale.ROOT));
         bot.setCitizensNpcId(null);
         bot.setStatus(BotStatus.DISMISSED);
         save();
+        // Ask Citizens to persist removals
+        try {
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
+        } catch (Throwable ignored) {
+        }
         return true;
     }
 
     /**
-     * Remove every crew bot and try to wipe leftover Citizens NPCs whose names look like ours.
+     * Remove every crew bot and wipe leftover Citizens NPCs (by name, mark, and id sweep).
      */
     public int purgeAll() {
         int n = 0;
+        java.util.Set<String> names = new java.util.HashSet<>();
         for (CrewBot bot : List.copyOf(botsById.values())) {
+            names.add(bot.getName());
             dismiss(bot);
             n++;
         }
-        // Sweep common orphan ids created by earlier versions
-        for (int id = 0; id <= 32; id++) {
+        // Any remaining marked AIBots NPCs
+        n += com.aibots.npc.CitizensHandle.destroyAllCrewMarked();
+        // Name sweep for known + common leftovers
+        for (String name : names) {
+            n += com.aibots.npc.CitizensHandle.destroyByName(name);
+        }
+        n += com.aibots.npc.CitizensHandle.destroyByName("Rusty");
+        n += com.aibots.npc.CitizensHandle.destroyByName("BuilderBot");
+        for (int id = 0; id <= 64; id++) {
             if (com.aibots.npc.CitizensHandle.destroyById(id)) {
                 n++;
             }
+        }
+        try {
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
+        } catch (Throwable ignored) {
         }
         save();
         return n;
