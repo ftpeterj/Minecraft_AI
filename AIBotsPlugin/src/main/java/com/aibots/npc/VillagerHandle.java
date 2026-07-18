@@ -1,0 +1,135 @@
+package com.aibots.npc;
+
+import com.aibots.crew.BotTitle;
+import org.bukkit.Location;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Villager;
+import org.bukkit.entity.memory.MemoryKey;
+import org.bukkit.plugin.java.JavaPlugin;
+
+/**
+ * Native Minecraft villager body — walks and arm-swings work; no black player skins.
+ */
+public final class VillagerHandle implements NpcHandle {
+
+    private final Villager villager;
+
+    public VillagerHandle(Villager villager) {
+        this.villager = villager;
+    }
+
+    public static VillagerHandle spawn(Location loc, String nameplate, BotTitle title, JavaPlugin plugin) {
+        Villager v = loc.getWorld().spawn(loc, Villager.class, villager -> {
+            villager.setCustomName(nameplate);
+            villager.setCustomNameVisible(true);
+            villager.setProfession(professionFor(title));
+            villager.setVillagerType(Villager.Type.PLAINS);
+            villager.setVillagerLevel(2);
+            villager.setAdult();
+            villager.setAI(false); // we drive movement
+            villager.setAware(false);
+            villager.setCanPickupItems(false);
+            villager.setRemoveWhenFarAway(false);
+            villager.setPersistent(true);
+            villager.setSilent(false);
+            villager.setInvulnerable(true);
+            villager.setCollidable(true);
+            try {
+                var attr = villager.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);
+                if (attr != null) {
+                    attr.setBaseValue(0.35);
+                }
+            } catch (Throwable ignored) {
+            }
+            // Clear job-site memories so they don't path to workstations
+            try {
+                villager.getMemory(MemoryKey.JOB_SITE);
+                villager.setMemory(MemoryKey.JOB_SITE, null);
+                villager.setMemory(MemoryKey.HOME, null);
+                villager.setMemory(MemoryKey.MEETING_POINT, null);
+            } catch (Throwable ignored) {
+            }
+        });
+        if (plugin != null) {
+            plugin.getLogger().info("[AIBots] Spawned villager avatar profession=" + v.getProfession());
+        }
+        return new VillagerHandle(v);
+    }
+
+    private static Villager.Profession professionFor(BotTitle title) {
+        if (title == null) {
+            return Villager.Profession.NITWIT;
+        }
+        return switch (title) {
+            case SCAVENGER -> Villager.Profession.TOOLSMITH;
+            case WARRIOR -> Villager.Profession.WEAPONSMITH;
+            case BUILDER -> Villager.Profession.MASON;
+            case FARMER -> Villager.Profession.FARMER;
+        };
+    }
+
+    public void setProfessionForTitle(BotTitle title) {
+        if (isValid()) {
+            villager.setProfession(professionFor(title));
+        }
+    }
+
+    @Override
+    public String backend() {
+        return "villager";
+    }
+
+    @Override
+    public boolean isValid() {
+        return villager != null && villager.isValid() && !villager.isDead();
+    }
+
+    @Override
+    public void destroy() {
+        if (isValid()) {
+            villager.remove();
+        }
+    }
+
+    @Override
+    public void teleport(Location location) {
+        if (isValid() && location != null) {
+            // Face movement direction if possible
+            Location from = villager.getLocation();
+            if (from.getWorld() != null && location.getWorld() != null) {
+                location = location.clone();
+                location.setDirection(location.toVector().subtract(from.toVector()));
+            }
+            villager.teleport(location);
+        }
+    }
+
+    @Override
+    public Location getLocation() {
+        return isValid() ? villager.getLocation() : null;
+    }
+
+    @Override
+    public void setNameplate(String nameplate) {
+        if (isValid()) {
+            villager.setCustomName(nameplate);
+            villager.setCustomNameVisible(true);
+        }
+    }
+
+    @Override
+    public void setSkin(String skinNameOrUrl) {
+        // Villagers don't use player skins — profession/clothes convey role
+    }
+
+    @Override
+    public Entity getEntity() {
+        return villager;
+    }
+
+    @Override
+    public Integer getCitizensId() {
+        return null;
+    }
+}

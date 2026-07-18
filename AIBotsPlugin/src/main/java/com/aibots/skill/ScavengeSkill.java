@@ -163,23 +163,30 @@ public class ScavengeSkill {
             return;
         }
 
+        // Body language: face block + swing while chopping/mining
+        Entity ent = body.getEntity();
+        if (ent instanceof LivingEntity living) {
+            Location look = tloc.clone();
+            look.setDirection(tloc.toVector().subtract(living.getLocation().toVector()));
+            living.teleport(look);
+            living.swingMainHand();
+        }
+
         target.breakNaturally();
+        if (ent instanceof LivingEntity living2) {
+            living2.swingMainHand();
+        }
         carryCount.put(bot.getId(), carried + 1);
         bot.setStatus(BotStatus.BUSY);
         bot.remember("Gathered " + type.name());
         learning.observe(bot, "scavenge", "Gathered " + type.name(), true, locBlockKey(tloc));
 
-        // Learn valuable materials near home
         if (carried + 1 >= 3) {
             learning.teach(bot,
                     "Good resource near base: " + type.name(),
                     "experience",
                     true);
         }
-
-        // Occasionally pick up nearby ground items into "carry" abstraction
-        // (real item entities — deposit still uses chest expansion via virtual carry count;
-        //  also try to suck items into a fake transfer by depositing natural drops next tick)
     }
 
     private void deposit(CrewBot bot, NpcHandle body, Location loc) {

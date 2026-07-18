@@ -10,9 +10,10 @@ crew:
   max-bots-per-player: 6
   # "owner" = use summoner's Minecraft username skin (recommended)
   default-skin: "owner"
-  # armorstand = reliable player-head skins on Paper 26 (recommended)
+  # villager = native body + walk/swing (recommended on Paper 26)
+  # armorstand = player head + leather body
   # citizens = full player model (often solid black on Paper 26.1)
-  avatar-mode: armorstand
+  avatar-mode: villager
   # Extra blocks upward for model footing
   y-offset: 0.0
   tick-interval: 20

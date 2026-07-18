@@ -1,9 +1,7 @@
 package com.aibots.npc;
 
-import com.aibots.crew.BotTitle;
 import com.aibots.crew.CrewBot;
 import org.bukkit.ChatColor;
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -15,7 +13,7 @@ import java.util.logging.Logger;
 
 /**
  * Spawns and tracks NPC bodies.
- * Default on Paper 26: armor stand + player head (Citizens player models render solid black).
+ * Default: native villagers (real body movement). Citizens player skins are black on Paper 26.
  */
 public class NpcService {
 
@@ -29,22 +27,23 @@ public class NpcService {
         this.plugin = plugin;
         this.log = plugin.getLogger();
         this.citizensPresent = CitizensHandle.isCitizensPresent();
-        // Default armorstand — reliable skins on Paper 26
-        this.avatarMode = plugin.getConfig().getString("crew.avatar-mode", "armorstand").toLowerCase(Locale.ROOT);
-        if (useCitizens()) {
-            log.info("Avatar mode: Citizens player NPCs.");
-        } else {
-            log.info("Avatar mode: ArmorStand + player head (reliable skins). mode=" + avatarMode
-                    + (citizensPresent ? " (Citizens installed but not used for bodies)" : ""));
-        }
+        this.avatarMode = plugin.getConfig().getString("crew.avatar-mode", "villager").toLowerCase(Locale.ROOT);
+        log.info("Avatar mode: " + avatarMode
+                + (citizensPresent ? " (Citizens present)" : " (no Citizens)"));
     }
 
     public boolean usingCitizens() {
-        return useCitizens();
+        return mode() == Mode.CITIZENS;
     }
 
-    private boolean useCitizens() {
-        return citizensPresent && (avatarMode.equals("citizens") || avatarMode.equals("player"));
+    private enum Mode { VILLAGER, ARMORSTAND, CITIZENS }
+
+    private Mode mode() {
+        return switch (avatarMode) {
+            case "citizens", "player" -> citizensPresent ? Mode.CITIZENS : Mode.VILLAGER;
+            case "armorstand", "armor_stand", "stand" -> Mode.ARMORSTAND;
+            default -> Mode.VILLAGER;
+        };
     }
 
     public NpcHandle get(UUID botId) {
@@ -53,7 +52,6 @@ public class NpcService {
 
     public NpcHandle spawnFor(CrewBot bot, Location location) {
         despawn(bot.getId());
-        // Always clean Citizens ghosts with this name (from older versions)
         if (citizensPresent) {
             int ghosts = CitizensHandle.destroyByName(bot.getName());
             if (ghosts > 0) {
@@ -62,19 +60,21 @@ public class NpcService {
         }
 
         Location at = NpcLocations.standOnSurface(location, plugin);
-        // Armor stands sit lower; slight lift for feet
-        if (!useCitizens()) {
-            at = at.clone().add(0, 0.0, 0);
-        }
-
         String plate = coloredNameplate(bot);
-        NpcHandle handle = null;
+        NpcHandle handle;
 
-        if (useCitizens()) {
-            handle = CitizensHandle.spawn(at, bot.getName(), plate, bot.getSkin(), plugin);
-        }
-        if (handle == null) {
-            handle = ArmorStandHandle.spawn(at, plate, bot.getSkin(), colorForTitle(bot.getTitle()), plugin);
+        switch (mode()) {
+            case CITIZENS -> {
+                handle = CitizensHandle.spawn(at, bot.getName(), plate, bot.getSkin(), plugin);
+                if (handle == null) {
+                    log.warning("Citizens spawn failed — falling back to villager.");
+                    handle = VillagerHandle.spawn(at, plate, bot.getTitle(), plugin);
+                }
+            }
+            case ARMORSTAND -> handle = ArmorStandHandle.spawn(
+                    at, plate, bot.getSkin(),
+                    org.bukkit.Color.fromRGB(0xC4A35A), plugin);
+            default -> handle = VillagerHandle.spawn(at, plate, bot.getTitle(), plugin);
         }
 
         final Location footing = at.clone();
@@ -89,9 +89,8 @@ public class NpcService {
         bot.setCitizensNpcId(handle.getCitizensId());
         bot.setLastLocation(at);
         log.info("Spawned " + bot.getName() + " via " + handle.backend()
-                + " skin=" + bot.getSkin()
-                + " y=" + at.getY()
-                + (handle.getCitizensId() != null ? " id=" + handle.getCitizensId() : ""));
+                + " title=" + bot.getTitle()
+                + " y=" + at.getY());
         return handle;
     }
 
@@ -100,7 +99,6 @@ public class NpcService {
         if (loc == null || loc.getWorld() == null) {
             return;
         }
-        // Prefer fresh armorstand/citizens spawn over stale Citizens attach
         spawnFor(bot, loc);
     }
 
@@ -108,6 +106,9 @@ public class NpcService {
         NpcHandle handle = handles.get(bot.getId());
         if (handle != null && handle.isValid()) {
             handle.setNameplate(coloredNameplate(bot));
+            if (handle instanceof VillagerHandle vh) {
+                vh.setProfessionForTitle(bot.getTitle());
+            }
         }
     }
 
@@ -164,14 +165,5 @@ public class NpcService {
         } catch (IllegalArgumentException e) {
             return ChatColor.AQUA;
         }
-    }
-
-    private Color colorForTitle(BotTitle title) {
-        return switch (title) {
-            case SCAVENGER -> Color.fromRGB(0xC4A35A); // gold/tan
-            case WARRIOR -> Color.fromRGB(0xB33A3A);
-            case BUILDER -> Color.fromRGB(0x3A8FB7);
-            case FARMER -> Color.fromRGB(0x4FAF4F);
-        };
     }
 }

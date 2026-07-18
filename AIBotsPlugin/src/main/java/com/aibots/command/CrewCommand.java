@@ -93,7 +93,9 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " storage fix  " + ChatColor.GRAY + "(merge adjacent singles into double chests)");
         sender.sendMessage(ChatColor.GRAY + "Titles: " + BotTitle.usageList());
         sender.sendMessage(ChatColor.GRAY + "All bots learn from teaching, chat, and experience (saved in learning.yml).");
-        sender.sendMessage(ChatColor.GRAY + "Backend: " + (crew.getNpcService().usingCitizens() ? "Citizens" : "ArmorStand fallback"));
+        String mode = plugin.getConfig().getString("crew.avatar-mode", "villager");
+        sender.sendMessage(ChatColor.GRAY + "Avatar mode: " + mode
+                + (crew.getNpcService().usingCitizens() ? " (Citizens)" : ""));
     }
 
     private void summon(CommandSender sender, String[] args) {
