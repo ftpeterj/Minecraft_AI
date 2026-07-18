@@ -3,6 +3,7 @@ package com.aibots;
 import com.aibots.command.CrewCommand;
 import com.aibots.crew.CrewManager;
 import com.aibots.listener.ChatListener;
+import com.aibots.listener.CrewInteractListener;
 import com.aibots.llm.LMStudioClient;
 import com.aibots.npc.NpcService;
 import org.bukkit.command.PluginCommand;
@@ -12,6 +13,7 @@ public class AIBotsPlugin extends JavaPlugin {
 
     private CrewManager crewManager;
     private LMStudioClient llm;
+    private NpcService npcService;
 
     @Override
     public void onEnable() {
@@ -31,7 +33,7 @@ public class AIBotsPlugin extends JavaPlugin {
                     : "LM Studio NOT reachable at " + baseUrl + " — chat will fail until fixed.");
         });
 
-        NpcService npcService = new NpcService(this);
+        npcService = new NpcService(this);
         crewManager = new CrewManager(this, npcService, llm);
         crewManager.start();
 
@@ -40,8 +42,9 @@ public class AIBotsPlugin extends JavaPlugin {
         registerCommand("aibot", crewCommand);
 
         getServer().getPluginManager().registerEvents(new ChatListener(this, crewManager), this);
+        getServer().getPluginManager().registerEvents(new CrewInteractListener(crewManager, npcService), this);
 
-        getLogger().info("AIBots crew Phase 1+2 enabled (learning + scavenger). Use /crew help");
+        getLogger().info("AIBots crew enabled. Right-click a crew villager to view loot (no trades). /crew help");
     }
 
     private void registerCommand(String name, CrewCommand executor) {

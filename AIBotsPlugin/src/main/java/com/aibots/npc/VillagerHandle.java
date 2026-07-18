@@ -37,6 +37,11 @@ public final class VillagerHandle implements NpcHandle {
             villager.setSilent(false);
             villager.setInvulnerable(true);
             villager.setCollidable(true);
+            // No trading — empty recipe list (right-click opens loot UI via listener)
+            try {
+                villager.setRecipes(java.util.Collections.emptyList());
+            } catch (Throwable ignored) {
+            }
             EntityCleanup.tagAsCrew(villager);
             try {
                 var attr = villager.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);

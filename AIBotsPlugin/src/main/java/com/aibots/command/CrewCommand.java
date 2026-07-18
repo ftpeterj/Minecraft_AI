@@ -307,6 +307,8 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         long facts = crew.getLearning().brain(bot).facts().size();
         long eps = crew.getLearning().brain(bot).recentEpisodes(100).size();
         sender.sendMessage(ChatColor.YELLOW + "Learned facts: " + facts + " | recent episodes: " + eps);
+        sender.sendMessage(ChatColor.YELLOW + "Loot items: " + bot.getLoot().totalItems()
+                + ChatColor.GRAY + " (right-click villager to open)");
         sender.sendMessage(ChatColor.GRAY + "Use /crew memory " + bot.getName() + " for details.");
     }
 

@@ -50,6 +50,20 @@ public class NpcService {
         return handles.get(botId);
     }
 
+    /** Resolve which crew bot owns this living entity body (for right-click loot). */
+    public java.util.Optional<UUID> botIdForEntity(org.bukkit.entity.Entity entity) {
+        if (entity == null) {
+            return java.util.Optional.empty();
+        }
+        for (Map.Entry<UUID, NpcHandle> e : handles.entrySet()) {
+            org.bukkit.entity.Entity body = e.getValue().getEntity();
+            if (body != null && body.getUniqueId().equals(entity.getUniqueId())) {
+                return java.util.Optional.of(e.getKey());
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
     public NpcHandle spawnFor(CrewBot bot, Location location) {
         despawn(bot.getId());
         if (citizensPresent) {

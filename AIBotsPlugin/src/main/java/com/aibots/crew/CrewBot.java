@@ -28,6 +28,7 @@ public class CrewBot {
     private Integer citizensNpcId;
     private String currentOrder;
     private final Deque<String> memory = new ArrayDeque<>();
+    private final CrewLootHolder loot;
 
     public CrewBot(UUID id, String name, BotTitle title, String skin, UUID ownerId) {
         this.id = id;
@@ -36,6 +37,11 @@ public class CrewBot {
         this.skin = skin;
         this.ownerId = ownerId;
         this.status = BotStatus.IDLE;
+        this.loot = new CrewLootHolder(id, name);
+    }
+
+    public CrewLootHolder getLoot() {
+        return loot;
     }
 
     public UUID getId() {

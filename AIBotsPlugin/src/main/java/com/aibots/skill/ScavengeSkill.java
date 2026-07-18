@@ -7,18 +7,16 @@ import com.aibots.learn.LearningService;
 import com.aibots.npc.NpcHandle;
 import com.aibots.npc.NpcService;
 import com.aibots.storage.ChestNetwork;
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Player;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
@@ -36,7 +34,6 @@ public class ScavengeSkill {
     private final NpcService npcService;
     private final ChestNetwork chests;
     private final LearningService learning;
-    private final Map<UUID, Integer> carryCount = new ConcurrentHashMap<>();
     private final Map<UUID, Material> focusMaterial = new ConcurrentHashMap<>();
 
     private static final Set<Material> DEFAULT_VALUED = EnumSet.of(
@@ -128,12 +125,12 @@ public class ScavengeSkill {
         // Storage only when actually working
         chests.ensureStorageNear(home);
 
-        int carried = carryCount.getOrDefault(bot.getId(), 0);
+        int carried = bot.getLoot().totalItems();
         int depositThreshold = plugin.getConfig().getInt("titles.scavenger.deposit-threshold", 8);
         int radius = plugin.getConfig().getInt("titles.scavenger.gather-radius", 24);
 
-        // Deposit if carrying enough
-        if (carried >= depositThreshold) {
+        // Deposit if carrying enough or bag is full
+        if (carried >= depositThreshold || bot.getLoot().getInventory().firstEmpty() == -1) {
             deposit(bot, body, loc);
             return;
         }
@@ -183,16 +180,26 @@ public class ScavengeSkill {
             living.swingMainHand();
         }
 
-        target.breakNaturally();
+        // Collect drops into personal loot bag (right-click villager to inspect)
+        Collection<ItemStack> drops = target.getDrops(new ItemStack(Material.IRON_AXE));
+        target.setType(Material.AIR);
+        int added = 0;
+        for (ItemStack drop : drops) {
+            ItemStack leftover = bot.getLoot().add(drop);
+            added += drop.getAmount() - (leftover == null ? 0 : leftover.getAmount());
+            if (leftover != null) {
+                // bag full — drop remainder on ground
+                target.getWorld().dropItemNaturally(tloc, leftover);
+            }
+        }
         if (ent instanceof LivingEntity living2) {
             living2.swingMainHand();
         }
-        carryCount.put(bot.getId(), carried + 1);
         bot.setStatus(BotStatus.BUSY);
-        bot.remember("Gathered " + type.name());
+        bot.remember("Gathered " + type.name() + " x" + Math.max(1, added));
         learning.observe(bot, "scavenge", "Gathered " + type.name(), true, locBlockKey(tloc));
 
-        if (carried + 1 >= 3) {
+        if (bot.getLoot().totalItems() >= 3) {
             learning.teach(bot,
                     "Good resource near base: " + type.name(),
                     "experience",
@@ -214,24 +221,33 @@ public class ScavengeSkill {
             return;
         }
 
-        // Convert carried count into deposited items of focus or cobble/log
-        Material mat = focusMaterial.getOrDefault(bot.getId(), Material.OAK_LOG);
-        int carried = carryCount.getOrDefault(bot.getId(), 0);
-        if (carried <= 0) {
+        if (bot.getLoot().isEmpty()) {
             return;
         }
-        ItemStack stack = new ItemStack(mat, Math.min(carried, 64));
-        int left = chests.depositStack(stack);
-        int deposited = stack.getAmount() - left;
-        if (deposited > 0) {
-            carryCount.put(bot.getId(), Math.max(0, carried - deposited));
-            bot.remember("Deposited " + deposited + "x " + mat.name());
-            learning.observe(bot, "deposit", "Deposited " + deposited + " " + mat.name(), true, null);
-            learning.teach(bot, "Storage network accepts " + mat.name(), "experience", true);
-            if (left > 0) {
-                // expand attempted inside depositStack
-                learning.observe(bot, "expand_chest", "Network was full; expand attempted", left < stack.getAmount(), null);
+
+        int depositedTotal = 0;
+        ItemStack[] contents = bot.getLoot().getInventory().getContents();
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack == null || stack.getType().isAir()) {
+                continue;
             }
+            int before = stack.getAmount();
+            int left = chests.depositStack(stack);
+            int deposited = before - left;
+            depositedTotal += deposited;
+            if (left <= 0) {
+                bot.getLoot().getInventory().setItem(i, null);
+            } else {
+                stack.setAmount(left);
+                bot.getLoot().getInventory().setItem(i, stack);
+            }
+        }
+
+        if (depositedTotal > 0) {
+            bot.remember("Deposited " + depositedTotal + " items to storage");
+            learning.observe(bot, "deposit", "Deposited " + depositedTotal + " items", true, null);
+            learning.teach(bot, "Storage network accepts gathered materials", "experience", true);
         } else {
             boolean expanded = chests.expandChest(chestLoc);
             learning.observe(bot, "expand_chest", expanded ? "Placed new chest" : "Could not expand", expanded, null);
@@ -240,7 +256,7 @@ public class ScavengeSkill {
             }
         }
 
-        if (carryCount.getOrDefault(bot.getId(), 0) == 0) {
+        if (bot.getLoot().isEmpty()) {
             bot.setStatus(BotStatus.IDLE);
         }
     }
