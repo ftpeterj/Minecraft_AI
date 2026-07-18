@@ -62,6 +62,7 @@ public final class ArmorStandHandle implements NpcHandle {
             as.getEquipment().setBoots(dyed(Material.LEATHER_BOOTS, armorColor));
             as.getEquipment().setItemInMainHand(new ItemStack(Material.WOODEN_AXE));
             as.getEquipment().setHelmet(new ItemStack(Material.PLAYER_HEAD));
+            EntityCleanup.tagAsCrew(as);
         });
 
         ArmorStandHandle handle = new ArmorStandHandle(stand, plugin);

@@ -58,6 +58,11 @@ public class NpcService {
                 log.info("Removed " + ghosts + " orphan Citizens NPC(s) named " + bot.getName());
             }
         }
+        // Kill leftover villagers/armorstands with same name (duplicate nameplates)
+        int worldGhosts = EntityCleanup.removeCrewBodiesNamed(bot.getName());
+        if (worldGhosts > 0) {
+            log.info("Removed " + worldGhosts + " orphan world bod(ies) named " + bot.getName());
+        }
 
         Location at = NpcLocations.standOnSurface(location, plugin);
         String plate = coloredNameplate(bot);

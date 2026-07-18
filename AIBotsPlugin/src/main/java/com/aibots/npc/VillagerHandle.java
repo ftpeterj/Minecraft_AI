@@ -20,8 +20,10 @@ public final class VillagerHandle implements NpcHandle {
     }
 
     public static VillagerHandle spawn(Location loc, String nameplate, BotTitle title, JavaPlugin plugin) {
+        // Single name tag only (avoid double holograms / duplicate setters)
+        final String plate = nameplate == null ? "Bot" : nameplate;
         Villager v = loc.getWorld().spawn(loc, Villager.class, villager -> {
-            villager.setCustomName(nameplate);
+            villager.setCustomName(plate);
             villager.setCustomNameVisible(true);
             villager.setProfession(professionFor(title));
             villager.setVillagerType(Villager.Type.PLAINS);
@@ -35,6 +37,7 @@ public final class VillagerHandle implements NpcHandle {
             villager.setSilent(false);
             villager.setInvulnerable(true);
             villager.setCollidable(true);
+            EntityCleanup.tagAsCrew(villager);
             try {
                 var attr = villager.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED);
                 if (attr != null) {
@@ -42,9 +45,7 @@ public final class VillagerHandle implements NpcHandle {
                 }
             } catch (Throwable ignored) {
             }
-            // Clear job-site memories so they don't path to workstations
             try {
-                villager.getMemory(MemoryKey.JOB_SITE);
                 villager.setMemory(MemoryKey.JOB_SITE, null);
                 villager.setMemory(MemoryKey.HOME, null);
                 villager.setMemory(MemoryKey.MEETING_POINT, null);

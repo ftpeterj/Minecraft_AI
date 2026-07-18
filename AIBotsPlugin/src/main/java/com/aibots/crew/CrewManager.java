@@ -193,6 +193,11 @@ public class CrewManager {
             com.aibots.npc.CitizensHandle.destroyById(citizensId);
         }
         com.aibots.npc.CitizensHandle.destroyByName(botName);
+        // Also remove any world villager/armorstand still named like this bot
+        int worldRemoved = com.aibots.npc.EntityCleanup.removeCrewBodiesNamed(botName);
+        if (worldRemoved > 0) {
+            plugin.getLogger().info("Dismiss also removed " + worldRemoved + " world bod(ies) for " + botName);
+        }
         botsById.remove(bot.getId());
         nameIndex.remove(botName.toLowerCase(Locale.ROOT));
         bot.setCitizensNpcId(null);
@@ -229,6 +234,10 @@ public class CrewManager {
             if (com.aibots.npc.CitizensHandle.destroyById(id)) {
                 n++;
             }
+        }
+        n += com.aibots.npc.EntityCleanup.removeAllTaggedCrew();
+        for (String name : names) {
+            n += com.aibots.npc.EntityCleanup.removeCrewBodiesNamed(name);
         }
         try {
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
