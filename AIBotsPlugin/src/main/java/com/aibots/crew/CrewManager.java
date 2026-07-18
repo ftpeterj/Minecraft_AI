@@ -65,20 +65,134 @@ public class CrewManager {
     public void start() {
         learning.load();
         chestNetwork.load();
-        load();
+
+        boolean clearOnLoad = plugin.getConfig().getBoolean("crew.clear-on-load", true);
+        if (clearOnLoad) {
+            clearAllCrewOnLoad();
+        } else {
+            load();
+        }
+
+        // Worlds finish loading entities a moment later — sweep stragglers
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            int n = com.aibots.npc.EntityCleanup.removeAllLikelyCrewBodies();
+            if (clearOnLoad) {
+                n += com.aibots.npc.EntityCleanup.removeAllTaggedCrew();
+                if (com.aibots.npc.CitizensHandle.isCitizensPresent()) {
+                    n += com.aibots.npc.CitizensHandle.destroyAllCrewMarked();
+                    for (int id = 0; id <= 64; id++) {
+                        if (com.aibots.npc.CitizensHandle.destroyById(id)) {
+                            n++;
+                        }
+                    }
+                    try {
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
+                    } catch (Throwable ignored) {
+                    }
+                }
+            } else {
+                // Even when persisting bots, kill orphan bodies that aren't in our registry
+                n += sweepUntrackedBodies();
+            }
+            if (n > 0) {
+                plugin.getLogger().info("Post-load crew body sweep removed " + n + " entit(y/ies).");
+            }
+        }, 60L);
+
         int interval = Math.max(10, plugin.getConfig().getInt("crew.tick-interval", 20));
         tickTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, interval, interval);
+    }
+
+    /**
+     * Wipe saved crew + any in-world crew bodies. Fresh summons after each server start.
+     */
+    public void clearAllCrewOnLoad() {
+        plugin.getLogger().info("clear-on-load=true — wiping saved crew and world bodies...");
+        // Drop registry without trying to despawn missing handles
+        botsById.clear();
+        nameIndex.clear();
+        if (botsFile.exists() && !botsFile.delete()) {
+            // overwrite with empty
+            save();
+        } else {
+            save();
+        }
+
+        int removed = com.aibots.npc.EntityCleanup.removeAllTaggedCrew();
+        removed += com.aibots.npc.EntityCleanup.removeAllLikelyCrewBodies();
+        if (com.aibots.npc.CitizensHandle.isCitizensPresent()) {
+            removed += com.aibots.npc.CitizensHandle.destroyAllCrewMarked();
+            for (int id = 0; id <= 64; id++) {
+                if (com.aibots.npc.CitizensHandle.destroyById(id)) {
+                    removed++;
+                }
+            }
+            try {
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
+            } catch (Throwable ignored) {
+            }
+        }
+        plugin.getLogger().info("Cleared old crew on load (entities removed≈" + removed + "). Summon with /crew summon.");
+    }
+
+    /** Remove villager/armorstand crew names that are not in botsById. */
+    private int sweepUntrackedBodies() {
+        int removed = 0;
+        for (org.bukkit.World world : Bukkit.getWorlds()) {
+            for (org.bukkit.entity.Entity entity : world.getEntities()) {
+                if (entity instanceof Player) {
+                    continue;
+                }
+                if (!(entity instanceof org.bukkit.entity.LivingEntity)) {
+                    continue;
+                }
+                boolean bodyType = entity instanceof org.bukkit.entity.Villager
+                        || entity instanceof org.bukkit.entity.ArmorStand;
+                if (!bodyType && !entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)) {
+                    continue;
+                }
+                String cn = entity.getCustomName();
+                if (cn == null) {
+                    if (entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)) {
+                        entity.remove();
+                        removed++;
+                    }
+                    continue;
+                }
+                String bare = com.aibots.npc.EntityCleanup.bareName(cn);
+                if (findByName(bare).isEmpty()
+                        && (entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)
+                        || com.aibots.npc.EntityCleanup.looksLikeCrewName(cn))) {
+                    entity.remove();
+                    removed++;
+                }
+            }
+        }
+        return removed;
     }
 
     public void shutdown() {
         if (tickTask != null) {
             tickTask.cancel();
         }
-        npcService.tickSyncLocations(botsById);
-        save();
+        boolean clearOnLoad = plugin.getConfig().getBoolean("crew.clear-on-load", true);
+        if (clearOnLoad) {
+            // Don't re-persist crew across restarts when clear-on-load is enabled
+            npcService.despawnAll();
+            botsById.clear();
+            nameIndex.clear();
+            if (botsFile.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                botsFile.delete();
+            }
+            save();
+        } else {
+            npcService.tickSyncLocations(botsById);
+            save();
+            npcService.despawnAll();
+        }
         learning.save();
         chestNetwork.save();
-        npcService.despawnAll();
         if (llm != null) {
             llm.close();
         }

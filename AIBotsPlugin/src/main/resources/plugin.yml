@@ -1,5 +1,5 @@
 name: AIBots
-version: '1.3.3'
+version: '1.3.4'
 description: Multi-role AI crew — villager avatars, learning, scavenger chests
 main: com.aibots.AIBotsPlugin
 api-version: '1.21'

@@ -8,6 +8,8 @@ lm-studio:
 
 crew:
   max-bots-per-player: 6
+  # Wipe bots.yml + world crew bodies on every plugin/server load (no ghosts after restart)
+  clear-on-load: true
   # "owner" = use summoner's Minecraft username skin (recommended)
   default-skin: "owner"
   # villager = native body + walk/swing (recommended on Paper 26)

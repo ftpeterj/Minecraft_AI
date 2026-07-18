@@ -97,4 +97,45 @@ public final class EntityCleanup {
         }
         return removed;
     }
+
+    /**
+     * Aggressive sweep: any villager/armorstand that looks like a crew bot
+     * (tagged, or name ends with a role title).
+     */
+    public static int removeAllLikelyCrewBodies() {
+        int removed = 0;
+        for (World world : Bukkit.getWorlds()) {
+            for (Entity entity : world.getEntities()) {
+                if (entity instanceof Player) {
+                    continue;
+                }
+                if (!(entity instanceof LivingEntity)) {
+                    continue;
+                }
+                boolean bodyType = entity instanceof org.bukkit.entity.Villager
+                        || entity instanceof org.bukkit.entity.ArmorStand;
+                if (!bodyType && !entity.getScoreboardTags().contains(TAG)) {
+                    continue;
+                }
+                if (entity.getScoreboardTags().contains(TAG) || looksLikeCrewName(entity.getCustomName())) {
+                    entity.remove();
+                    removed++;
+                }
+            }
+        }
+        return removed;
+    }
+
+    public static boolean looksLikeCrewName(String customName) {
+        if (customName == null) {
+            return false;
+        }
+        String full = stripColor(customName).toLowerCase(Locale.ROOT);
+        return full.contains("[scavenger]")
+                || full.contains("[warrior]")
+                || full.contains("[builder]")
+                || full.contains("[farmer]")
+                || full.contains("[protector]")
+                || full.contains("[fighter]");
+    }
 }
