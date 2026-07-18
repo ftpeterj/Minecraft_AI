@@ -311,6 +311,14 @@ public final class SkinApplier {
         }
     }
 
+    /** Public for ArmorStand heads and other avatars. */
+    public static Texture fetchTexturePublic(String username, JavaPlugin plugin) {
+        return fetchMojangTexture(username, plugin);
+    }
+
+    public record Texture(String value, String signature) {
+    }
+
     private static Texture fetchMojangTexture(String username, JavaPlugin plugin) {
         try {
             String profileJson = httpGet("https://api.mojang.com/users/profiles/minecraft/" + username);
@@ -372,6 +380,4 @@ public final class SkinApplier {
         }
     }
 
-    private record Texture(String value, String signature) {
-    }
 }

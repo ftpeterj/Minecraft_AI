@@ -17,8 +17,8 @@ public final class NpcLocations {
     }
 
     /**
-     * Place feet on top of the highest block at x/z.
-     * {@code crew.y-offset} lifts further (default 1.0 fixes Citizens sitting in the floor).
+     * Place feet on walkable ground (not tree canopy / leaves).
+     * {@code crew.y-offset} lifts further if models sit low.
      */
     public static Location standOnSurface(Location ref, JavaPlugin plugin) {
         if (ref == null || ref.getWorld() == null) {
@@ -26,10 +26,34 @@ public final class NpcLocations {
         }
         World world = ref.getWorld();
         Location out = ref.clone();
-        int top = world.getHighestBlockYAt(out.getBlockX(), out.getBlockZ());
-        // Block at `top` is solid surface; normal feet = top+1; plus y-offset for NPC sink
-        out.setY(top + 1.0 + yOffset(plugin));
+        int x = out.getBlockX();
+        int z = out.getBlockZ();
+        int y = groundY(world, x, z);
+        out.setY(y + yOffset(plugin));
         return out;
+    }
+
+    /**
+     * Highest solid non-leaf / non-log surface — keeps scavengers out of treetops.
+     */
+    public static int groundY(World world, int x, int z) {
+        int y = world.getHighestBlockYAt(x, z);
+        int min = world.getMinHeight();
+        while (y > min) {
+            var type = world.getBlockAt(x, y, z).getType();
+            String n = type.name();
+            boolean passable = !type.isSolid()
+                    || n.contains("LEAVES")
+                    || n.contains("LOG")
+                    || n.contains("VINE")
+                    || n.contains("SCAFFOLD")
+                    || n.equals("BAMBOO");
+            if (!passable) {
+                return y + 1; // feet on top of this solid
+            }
+            y--;
+        }
+        return world.getHighestBlockYAt(x, z) + 1;
     }
 
     /** Nudge any location up by configured offset (spawn near player). */

@@ -10,10 +10,11 @@ crew:
   max-bots-per-player: 6
   # "owner" = use summoner's Minecraft username skin (recommended)
   default-skin: "owner"
-  # citizens = full player model (needs working skins); armorstand = body+player head (reliable face)
-  avatar-mode: citizens
-  # Extra blocks upward — Citizens player NPCs often sit 1 block in the floor
-  y-offset: 1.0
+  # armorstand = reliable player-head skins on Paper 26 (recommended)
+  # citizens = full player model (often solid black on Paper 26.1)
+  avatar-mode: armorstand
+  # Extra blocks upward for model footing
+  y-offset: 0.0
   tick-interval: 20
   chat-mention-enabled: true
   show-title-on-nameplate: true

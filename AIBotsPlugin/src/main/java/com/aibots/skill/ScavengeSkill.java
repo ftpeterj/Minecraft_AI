@@ -45,7 +45,7 @@ public class ScavengeSkill {
             Material.COBBLESTONE, Material.STONE, Material.COAL_ORE, Material.DEEPSLATE_COAL_ORE,
             Material.IRON_ORE, Material.DEEPSLATE_IRON_ORE, Material.COPPER_ORE,
             Material.DEEPSLATE_COPPER_ORE, Material.SAND, Material.GRAVEL, Material.CLAY,
-            Material.OAK_LEAVES, Material.WHEAT, Material.CARROTS, Material.POTATOES
+            Material.WHEAT, Material.CARROTS, Material.POTATOES
     );
 
     public ScavengeSkill(JavaPlugin plugin, NpcService npcService, ChestNetwork chests, LearningService learning) {
