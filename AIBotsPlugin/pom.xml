@@ -6,7 +6,7 @@
 
     <groupId>com.aibots</groupId>
     <artifactId>aibots</artifactId>
-    <version>1.2.6-SNAPSHOT</version>
+    <version>1.2.7-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>AIBots</name>
     <description>Multi-role summonable AI crew for Paper (Phase 1)</description>

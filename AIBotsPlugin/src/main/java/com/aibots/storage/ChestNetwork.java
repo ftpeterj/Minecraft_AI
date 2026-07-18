@@ -5,8 +5,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.Chest;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
+import org.bukkit.block.data.type.Chest;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.inventory.Inventory;
@@ -18,7 +19,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Linked chests near a home that scavengers fill and expand when full.
@@ -81,6 +81,8 @@ public class ChestNetwork {
             }
         }
         plugin.getLogger().info("Chest network loaded: " + chests.size() + " chest(s).");
+        // Fix old placements that were two singles side-by-side
+        Bukkit.getScheduler().runTaskLater(plugin, this::reconnectAdjacentSingles, 40L);
     }
 
     public void save() {
@@ -138,6 +140,8 @@ public class ChestNetwork {
     public Location ensureStorageNear(Location home) {
         pruneInvalid();
         if (!chests.isEmpty()) {
+            // Try to pair any existing single chests that sit adjacent
+            reconnectAdjacentSingles();
             return nearestChest(home);
         }
         if (home == null || home.getWorld() == null) {
@@ -146,16 +150,20 @@ public class ChestNetwork {
         Location place = findPlaceSpot(home);
         if (place == null) {
             place = home.clone().add(2, 0, 0);
+            place.setY(home.getWorld().getHighestBlockYAt(place) + 1);
         }
-        place.getBlock().setType(Material.CHEST);
-        registerChest(place);
         if (preferDouble) {
             Location side = place.clone().add(1, 0, 0);
-            if (side.getBlock().getType().isAir()) {
-                side.getBlock().setType(Material.CHEST);
+            if (side.getBlock().getType().isAir()
+                    && side.clone().add(0, -1, 0).getBlock().getType().isSolid()) {
+                placeDoubleChest(place.getBlock(), side.getBlock());
+                registerChest(place);
                 registerChest(side);
+                return place.getBlock().getLocation();
             }
         }
+        placeSingleChest(place.getBlock(), BlockFace.SOUTH);
+        registerChest(place);
         return place.getBlock().getLocation();
     }
 
@@ -276,7 +284,26 @@ public class ChestNetwork {
         if (chests.size() >= maxChests || near == null) {
             return false;
         }
-        int[][] offsets = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {2, 0}, {0, 2}, {1, 1}};
+        // Prefer completing a double-chest with an adjacent single
+        if (preferDouble) {
+            Block partner = near.getBlock();
+            if (partner.getType() == Material.CHEST && isSingleChest(partner)) {
+                int[][] adj = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (int[] o : adj) {
+                    Block cand = partner.getRelative(o[0], 0, o[1]);
+                    if (!cand.getType().isAir()) {
+                        continue;
+                    }
+                    if (!cand.getRelative(BlockFace.DOWN).getType().isSolid()) {
+                        continue;
+                    }
+                    placeDoubleChest(partner, cand);
+                    registerChest(cand.getLocation());
+                    return true;
+                }
+            }
+        }
+        int[][] offsets = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {2, 0}, {0, 2}};
         for (int[] o : offsets) {
             Location candidate = near.clone().add(o[0], 0, o[1]);
             Block ground = candidate.clone().add(0, -1, 0).getBlock();
@@ -287,18 +314,164 @@ public class ChestNetwork {
             if (!ground.getType().isSolid()) {
                 continue;
             }
-            block.setType(Material.CHEST);
+            // If next to an existing single chest, form a double
+            Block neighbor = findAdjacentSingleChest(block);
+            if (preferDouble && neighbor != null) {
+                placeDoubleChest(neighbor, block);
+            } else if (preferDouble) {
+                Block side = block.getRelative(BlockFace.EAST);
+                if (side.getType().isAir() && side.getRelative(BlockFace.DOWN).getType().isSolid()) {
+                    placeDoubleChest(block, side);
+                    registerChest(candidate);
+                    registerChest(side.getLocation());
+                    return true;
+                }
+                placeSingleChest(block, BlockFace.SOUTH);
+            } else {
+                placeSingleChest(block, BlockFace.SOUTH);
+            }
             registerChest(candidate);
             return true;
         }
-        // fallback: place above
         Location up = near.clone().add(0, 1, 0);
         if (up.getBlock().getType().isAir()) {
-            up.getBlock().setType(Material.CHEST);
+            placeSingleChest(up.getBlock(), BlockFace.SOUTH);
             registerChest(up);
             return true;
         }
         return false;
+    }
+
+    /**
+     * Place two adjacent chests as a proper double-chest (shared 54-slot inventory).
+     * Simply setType(CHEST) twice leaves two unconnected singles.
+     */
+    public static void placeDoubleChest(Block a, Block b) {
+        if (a == null || b == null) {
+            return;
+        }
+        // Only horizontal adjacency
+        int dx = b.getX() - a.getX();
+        int dy = b.getY() - a.getY();
+        int dz = b.getZ() - a.getZ();
+        if (dy != 0 || Math.abs(dx) + Math.abs(dz) != 1) {
+            placeSingleChest(a, BlockFace.SOUTH);
+            placeSingleChest(b, BlockFace.SOUTH);
+            return;
+        }
+
+        // Facing must be perpendicular to the pair axis
+        BlockFace facing;
+        if (dx != 0) {
+            // side-by-side on X → face north or south
+            facing = BlockFace.SOUTH;
+        } else {
+            // side-by-side on Z → face east or west
+            facing = BlockFace.EAST;
+        }
+
+        Chest.Type typeA;
+        Chest.Type typeB;
+        // LEFT/RIGHT are relative to facing (Minecraft blockstates)
+        if (facing == BlockFace.SOUTH) {
+            // looking south: west=LEFT, east=RIGHT
+            if (a.getX() < b.getX()) {
+                typeA = Chest.Type.LEFT;
+                typeB = Chest.Type.RIGHT;
+            } else {
+                typeA = Chest.Type.RIGHT;
+                typeB = Chest.Type.LEFT;
+            }
+        } else if (facing == BlockFace.NORTH) {
+            if (a.getX() < b.getX()) {
+                typeA = Chest.Type.RIGHT;
+                typeB = Chest.Type.LEFT;
+            } else {
+                typeA = Chest.Type.LEFT;
+                typeB = Chest.Type.RIGHT;
+            }
+        } else if (facing == BlockFace.EAST) {
+            // looking east: north=LEFT, south=RIGHT? → smaller Z is LEFT when facing east
+            if (a.getZ() < b.getZ()) {
+                typeA = Chest.Type.LEFT;
+                typeB = Chest.Type.RIGHT;
+            } else {
+                typeA = Chest.Type.RIGHT;
+                typeB = Chest.Type.LEFT;
+            }
+        } else { // WEST
+            if (a.getZ() < b.getZ()) {
+                typeA = Chest.Type.RIGHT;
+                typeB = Chest.Type.LEFT;
+            } else {
+                typeA = Chest.Type.LEFT;
+                typeB = Chest.Type.RIGHT;
+            }
+        }
+
+        a.setType(Material.CHEST, false);
+        b.setType(Material.CHEST, false);
+
+        Chest dataA = (Chest) Material.CHEST.createBlockData();
+        Chest dataB = (Chest) Material.CHEST.createBlockData();
+        dataA.setFacing(facing);
+        dataB.setFacing(facing);
+        dataA.setType(typeA);
+        dataB.setType(typeB);
+        a.setBlockData(dataA, true);
+        b.setBlockData(dataB, true);
+    }
+
+    public static void placeSingleChest(Block block, BlockFace facing) {
+        if (block == null) {
+            return;
+        }
+        block.setType(Material.CHEST, false);
+        Chest data = (Chest) Material.CHEST.createBlockData();
+        data.setFacing(facing == null ? BlockFace.SOUTH : facing);
+        data.setType(Chest.Type.SINGLE);
+        block.setBlockData(data, true);
+    }
+
+    private static boolean isSingleChest(Block block) {
+        if (block.getType() != Material.CHEST) {
+            return false;
+        }
+        if (block.getBlockData() instanceof Chest chest) {
+            return chest.getType() == Chest.Type.SINGLE;
+        }
+        return true;
+    }
+
+    private static Block findAdjacentSingleChest(Block block) {
+        for (BlockFace face : new BlockFace[]{BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+            Block n = block.getRelative(face);
+            if (isSingleChest(n)) {
+                return n;
+            }
+        }
+        return null;
+    }
+
+    /** Fix already-placed adjacent singles into double chests (e.g. old bot placements). */
+    public void reconnectAdjacentSingles() {
+        boolean changed = false;
+        for (Location loc : List.copyOf(chests)) {
+            Block b = loc.getBlock();
+            if (!isSingleChest(b)) {
+                continue;
+            }
+            Block n = findAdjacentSingleChest(b);
+            if (n != null) {
+                placeDoubleChest(b, n);
+                registerChest(n.getLocation());
+                changed = true;
+            }
+        }
+        if (changed) {
+            plugin.getLogger().info("[AIBots] Reconnected adjacent single chests into double chests.");
+            save();
+        }
     }
 
     private Location findPlaceSpot(Location home) {
