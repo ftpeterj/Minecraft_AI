@@ -1,0 +1,8 @@
+package com.aibots.llm;
+
+public interface LLMProvider {
+    String generateResponse(String prompt, LLMContext context);
+    // TODO: streaming, error handling, model selection
+}
+
+// Concrete implementations in sub-packages
