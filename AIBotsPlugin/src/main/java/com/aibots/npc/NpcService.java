@@ -22,6 +22,7 @@ public class NpcService {
     private final Map<UUID, NpcHandle> handles = new ConcurrentHashMap<>();
     private final boolean citizensPresent;
     private final String avatarMode;
+    private org.bukkit.scheduler.BukkitTask gravityTask;
 
     public NpcService(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -30,6 +31,28 @@ public class NpcService {
         this.avatarMode = plugin.getConfig().getString("crew.avatar-mode", "villager").toLowerCase(Locale.ROOT);
         log.info("Avatar mode: " + avatarMode
                 + (citizensPresent ? " (Citizens present)" : " (no Citizens)"));
+        // Physics every 2 ticks so NoAI villagers actually fall
+        this.gravityTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tickGravity, 2L, 2L);
+    }
+
+    /** Drop mid-air crew bodies onto solid ground. */
+    private void tickGravity() {
+        for (NpcHandle h : handles.values()) {
+            if (h == null || !h.isValid()) {
+                continue;
+            }
+            org.bukkit.entity.Entity e = h.getEntity();
+            if (e != null) {
+                NpcLocations.applyGravity(e);
+            }
+        }
+    }
+
+    public void shutdownPhysics() {
+        if (gravityTask != null) {
+            gravityTask.cancel();
+            gravityTask = null;
+        }
     }
 
     public boolean usingCitizens() {
@@ -48,6 +71,57 @@ public class NpcService {
 
     public NpcHandle get(UUID botId) {
         return handles.get(botId);
+    }
+
+    /** True if this entity is a currently driven crew body. */
+    public boolean isTrackedEntity(org.bukkit.entity.Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        for (NpcHandle h : handles.values()) {
+            if (h == null || !h.isValid()) {
+                continue;
+            }
+            org.bukkit.entity.Entity e = h.getEntity();
+            if (e != null && e.getUniqueId().equals(entity.getUniqueId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Return a valid body, respawning if the entity was removed (orphan sweep, chunk, etc.).
+     */
+    public NpcHandle ensureBody(com.aibots.crew.CrewBot bot) {
+        if (bot == null) {
+            return null;
+        }
+        NpcHandle h = handles.get(bot.getId());
+        if (h != null && h.isValid()) {
+            return h;
+        }
+        Location loc = bot.getLastLocation();
+        if (loc == null || loc.getWorld() == null) {
+            loc = bot.getHome();
+        }
+        org.bukkit.entity.Player owner = bot.getOwnerPlayer();
+        if (owner != null && owner.isOnline()) {
+            // Prefer near owner so "missing" bots reappear with the player
+            Location near = NpcLocations.safeSummonInFront(owner, plugin);
+            if (near != null) {
+                loc = near;
+            } else {
+                loc = owner.getLocation();
+            }
+        }
+        if (loc == null || loc.getWorld() == null) {
+            log.warning("Cannot respawn " + bot.getName() + " — no location.");
+            return null;
+        }
+        log.info("Respawning missing body for " + bot.getName() + " at "
+                + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ());
+        return spawnFor(bot, loc);
     }
 
     /** Resolve which crew bot owns this living entity body (for right-click loot). */
@@ -78,7 +152,21 @@ public class NpcService {
             log.info("Removed " + worldGhosts + " orphan world bod(ies) named " + bot.getName());
         }
 
-        Location at = NpcLocations.standOnSurface(location, plugin);
+        // Summon already computed a safe floor spot — don't re-snap with standOnSurface
+        // (that could dig into caves if the sample Y was off). Only fix if inside solid.
+        Location at = location.clone();
+        if (at.getWorld() != null) {
+            int fy = at.getBlockY();
+            if (!NpcLocations.canStandAt(at.getWorld(), at.getBlockX(), fy, at.getBlockZ())) {
+                Location fixed = NpcLocations.findSafeFeet(
+                        at.getWorld(), at.getX(), fy, at.getZ(), fy);
+                if (fixed != null) {
+                    at = fixed;
+                } else {
+                    at = NpcLocations.standOnSurface(location, plugin);
+                }
+            }
+        }
         String plate = coloredNameplate(bot);
         NpcHandle handle;
 
@@ -156,6 +244,11 @@ public class NpcService {
             NpcHandle h = e.getValue();
             if (!h.isValid()) {
                 continue;
+            }
+            // Gravity before location sync (NoAI bodies don't fall on their own)
+            org.bukkit.entity.Entity ent = h.getEntity();
+            if (ent != null) {
+                NpcLocations.applyGravity(ent);
             }
             Location loc = h.getLocation();
             CrewBot bot = bots.get(e.getKey());

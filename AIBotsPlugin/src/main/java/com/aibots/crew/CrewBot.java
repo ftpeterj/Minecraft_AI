@@ -6,6 +6,7 @@ import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -31,13 +32,17 @@ public class CrewBot {
     private final CrewLootHolder loot;
 
     public CrewBot(UUID id, String name, BotTitle title, String skin, UUID ownerId) {
+        this(id, name, title, skin, ownerId, null);
+    }
+
+    public CrewBot(UUID id, String name, BotTitle title, String skin, UUID ownerId, JavaPlugin plugin) {
         this.id = id;
         this.name = name;
         this.title = title;
         this.skin = skin;
         this.ownerId = ownerId;
         this.status = BotStatus.IDLE;
-        this.loot = new CrewLootHolder(id, name);
+        this.loot = CrewLootHolder.create(id, name, plugin);
     }
 
     public CrewLootHolder getLoot() {

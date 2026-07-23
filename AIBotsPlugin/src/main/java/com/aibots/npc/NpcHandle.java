@@ -4,7 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 
 /**
- * Opaque handle for a spawned crew body (Citizens NPC or ArmorStand).
+ * Opaque handle for a spawned crew body (villager / Citizens / ArmorStand).
  */
 public interface NpcHandle {
 
@@ -14,7 +14,28 @@ public interface NpcHandle {
 
     void destroy();
 
+    /** Hard relocate (spawn, rescue). Prefer {@link #walkTo} for movement. */
     void teleport(Location location);
+
+    /**
+     * Walk toward a target using real pathfinding when available.
+     *
+     * @param speed pathfinder speed multiplier (1.0 = normal)
+     * @return true if a path or step was started
+     */
+    default boolean walkTo(Location target, double speed) {
+        teleport(target);
+        return true;
+    }
+
+    /** Cancel active pathfinding. */
+    default void stopWalking() {
+    }
+
+    /** True if currently following a path. */
+    default boolean isWalking() {
+        return false;
+    }
 
     Location getLocation();
 

@@ -1,10 +1,16 @@
 package com.aibots.crew;
 
 import com.aibots.learn.LearningService;
+import com.aibots.llm.LLMContext;
+import com.aibots.llm.LLMProvider;
 import com.aibots.llm.LMStudioClient;
 import com.aibots.llm.RolePrompts;
 import com.aibots.npc.NpcHandle;
 import com.aibots.npc.NpcService;
+import com.aibots.skill.BuilderSkill;
+import com.aibots.skill.CombatSkill;
+import com.aibots.skill.FarmerSkill;
+import com.aibots.skill.HunterSkill;
 import com.aibots.skill.ScavengeSkill;
 import com.aibots.storage.ChestNetwork;
 import org.bukkit.Bukkit;
@@ -34,24 +40,47 @@ public class CrewManager {
 
     private final JavaPlugin plugin;
     private final NpcService npcService;
-    private final LMStudioClient llm;
+    private final LLMProvider llm;
     private final LearningService learning;
     private final ChestNetwork chestNetwork;
     private final ScavengeSkill scavengeSkill;
+    private final CombatSkill combatSkill;
+    private final HunterSkill hunterSkill;
+    private final FarmerSkill farmerSkill;
+    private final BuilderSkill builderSkill;
+    private final CrewMessenger messenger;
     private final Map<UUID, CrewBot> botsById = new ConcurrentHashMap<>();
     private final Map<String, UUID> nameIndex = new ConcurrentHashMap<>();
     private final File botsFile;
     private BukkitTask tickTask;
     private int tickCounter;
 
-    public CrewManager(JavaPlugin plugin, NpcService npcService, LMStudioClient llm) {
+    public CrewManager(JavaPlugin plugin, NpcService npcService, LLMProvider llm) {
         this.plugin = plugin;
         this.npcService = npcService;
         this.llm = llm;
         this.learning = new LearningService(plugin);
         this.chestNetwork = new ChestNetwork(plugin);
         this.scavengeSkill = new ScavengeSkill(plugin, npcService, chestNetwork, learning);
+        this.combatSkill = new CombatSkill(plugin, npcService, learning);
+        this.hunterSkill = new HunterSkill(plugin, npcService, chestNetwork, learning);
+        this.farmerSkill = new FarmerSkill(plugin, npcService, chestNetwork, learning);
+        this.builderSkill = new BuilderSkill(plugin, npcService, chestNetwork, learning);
+        this.messenger = new CrewMessenger(
+                plugin,
+                id -> Optional.ofNullable(botsById.get(id)),
+                this::findByName,
+                this::botsOwnedBy,
+                learning,
+                chestNetwork
+        );
+        this.builderSkill.setMessenger(messenger);
         this.botsFile = new File(plugin.getDataFolder(), "bots.yml");
+    }
+
+    /** Backward-compatible ctor. */
+    public CrewManager(JavaPlugin plugin, NpcService npcService, LMStudioClient llm) {
+        this(plugin, npcService, (LLMProvider) llm);
     }
 
     public LearningService getLearning() {
@@ -60,6 +89,14 @@ public class CrewManager {
 
     public ChestNetwork getChestNetwork() {
         return chestNetwork;
+    }
+
+    public CrewMessenger getMessenger() {
+        return messenger;
+    }
+
+    public BuilderSkill getBuilderSkill() {
+        return builderSkill;
     }
 
     public void start() {
@@ -73,31 +110,16 @@ public class CrewManager {
             load();
         }
 
-        // Worlds finish loading entities a moment later — sweep stragglers
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            int n = com.aibots.npc.EntityCleanup.removeAllLikelyCrewBodies();
-            if (clearOnLoad) {
-                n += com.aibots.npc.EntityCleanup.removeAllTaggedCrew();
-                if (com.aibots.npc.CitizensHandle.isCitizensPresent()) {
-                    n += com.aibots.npc.CitizensHandle.destroyAllCrewMarked();
-                    for (int id = 0; id <= 64; id++) {
-                        if (com.aibots.npc.CitizensHandle.destroyById(id)) {
-                            n++;
-                        }
-                    }
-                    try {
-                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
-                    } catch (Throwable ignored) {
-                    }
+        // Delayed orphan sweeps: ONLY untracked ghosts — never wipe live summoned bots.
+        // (Previously clear-on-load used removeAllLikelyCrewBodies here and deleted Rusty after summon.)
+        for (long delay : new long[]{40L, 100L, 200L, 600L, 1200L}) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                int n = sweepUntrackedBodies();
+                if (n > 0) {
+                    plugin.getLogger().info("Post-load orphan sweep removed " + n + " untracked bod(ies).");
                 }
-            } else {
-                // Even when persisting bots, kill orphan bodies that aren't in our registry
-                n += sweepUntrackedBodies();
-            }
-            if (n > 0) {
-                plugin.getLogger().info("Post-load crew body sweep removed " + n + " entit(y/ies).");
-            }
-        }, 60L);
+            }, delay);
+        }
 
         int interval = Math.max(10, plugin.getConfig().getInt("crew.tick-interval", 20));
         tickTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, interval, interval);
@@ -135,7 +157,15 @@ public class CrewManager {
         plugin.getLogger().info("Cleared old crew on load (entities removed≈" + removed + "). Summon with /crew summon.");
     }
 
-    /** Remove villager/armorstand crew names that are not in botsById. */
+    /**
+     * Remove leftover crew-like bodies that are NOT a live bot body.
+     * Never removes entities currently tracked by NpcService.
+     */
+    public int sweepWorldOrphans() {
+        return sweepUntrackedBodies();
+    }
+
+    /** Remove villager/armorstand crew ghosts not owned by a live registry bot. */
     private int sweepUntrackedBodies() {
         int removed = 0;
         for (org.bukkit.World world : Bukkit.getWorlds()) {
@@ -146,13 +176,17 @@ public class CrewManager {
                 if (!(entity instanceof org.bukkit.entity.LivingEntity)) {
                     continue;
                 }
+                // Never kill a body we are actively driving
+                if (npcService.isTrackedEntity(entity)) {
+                    continue;
+                }
                 boolean bodyType = entity instanceof org.bukkit.entity.Villager
                         || entity instanceof org.bukkit.entity.ArmorStand;
                 if (!bodyType && !entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)) {
                     continue;
                 }
-                String cn = entity.getCustomName();
-                if (cn == null) {
+                String cn = com.aibots.npc.EntityCleanup.resolveName(entity);
+                if (cn == null || cn.isBlank()) {
                     if (entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)) {
                         entity.remove();
                         removed++;
@@ -160,15 +194,48 @@ public class CrewManager {
                     continue;
                 }
                 String bare = com.aibots.npc.EntityCleanup.bareName(cn);
-                if (findByName(bare).isEmpty()
-                        && (entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)
-                        || com.aibots.npc.EntityCleanup.looksLikeCrewName(cn))) {
-                    entity.remove();
-                    removed++;
+                boolean crewish = entity.getScoreboardTags().contains(com.aibots.npc.EntityCleanup.TAG)
+                        || com.aibots.npc.EntityCleanup.looksLikeCrewName(cn);
+                if (!crewish) {
+                    continue;
                 }
+                // Keep if a live bot claims this name
+                if (findByName(bare).isPresent()) {
+                    continue;
+                }
+                entity.remove();
+                removed++;
             }
         }
         return removed;
+    }
+
+    /**
+     * Ensure the bot has a valid world body; respawn at last/home/owner if missing.
+     * Fixes "talks but invisible" after orphan sweeps or chunk issues.
+     */
+    public NpcHandle ensureBody(CrewBot bot) {
+        if (bot == null) {
+            return null;
+        }
+        return npcService.ensureBody(bot);
+    }
+
+    /** Bring bot body to a location (e.g. owner). */
+    public void bringHere(CrewBot bot, Location where) {
+        NpcHandle body = ensureBody(bot);
+        if (body == null || where == null) {
+            return;
+        }
+        Location dest = com.aibots.npc.NpcLocations.findSafeFeet(
+                where.getWorld(), where.getX(), where.getBlockY(), where.getZ(), where.getBlockY());
+        if (dest == null) {
+            dest = where.clone();
+        }
+        body.stopWalking();
+        body.teleport(dest);
+        bot.setLastLocation(dest);
+        save();
     }
 
     public void shutdown() {
@@ -193,9 +260,8 @@ public class CrewManager {
         }
         learning.save();
         chestNetwork.save();
-        if (llm != null) {
-            llm.close();
-        }
+        npcService.shutdownPhysics();
+        // LLM lifecycle owned by AIBotsPlugin (router); do not close here
     }
 
     private void tick() {
@@ -203,10 +269,26 @@ public class CrewManager {
         tickCounter++;
         for (CrewBot bot : botsById.values()) {
             try {
-                if (bot.getTitle() == BotTitle.SCAVENGER) {
-                    scavengeSkill.tick(bot);
+                // Keep body alive so work + walking can happen
+                if (bot.getStatus() != BotStatus.DISMISSED) {
+                    ensureBody(bot);
                 }
-                // Phase 3/4: warrior/builder/farmer skills
+                if (bot.getTitle() == null) {
+                    continue;
+                }
+                // Inter-bot inbox (delegation / material requests)
+                messenger.processInbox(bot, this::assign);
+                if (bot.getTitle().isGatherer()) {
+                    scavengeSkill.tick(bot);
+                } else if (bot.getTitle().isCombat()) {
+                    combatSkill.tick(bot);
+                } else if (bot.getTitle().isHunter()) {
+                    hunterSkill.tick(bot);
+                } else if (bot.getTitle().isFarmer()) {
+                    farmerSkill.tick(bot);
+                } else if (bot.getTitle() == BotTitle.BUILDER) {
+                    builderSkill.tick(bot);
+                }
             } catch (Exception e) {
                 plugin.getLogger().warning("Tick error for " + bot.getName() + ": " + e.getMessage());
                 learning.observe(bot, "error", e.getMessage(), false, bot.getTitle().name());
@@ -272,9 +354,13 @@ public class CrewManager {
             skin = configuredDefault.trim();
         }
 
-        CrewBot bot = new CrewBot(UUID.randomUUID(), clean, title, skin, owner.getUniqueId());
+        CrewBot bot = new CrewBot(UUID.randomUUID(), clean, title, skin, owner.getUniqueId(), plugin);
         bot.setStatus(BotStatus.IDLE);
-        Location spawnAt = owner.getLocation().add(owner.getLocation().getDirection().normalize().multiply(2)).add(0, 0.1, 0);
+        // Horizontal in-front spawn on the player's floor (looking down used to bury bots)
+        Location spawnAt = com.aibots.npc.NpcLocations.safeSummonInFront(owner, plugin);
+        if (spawnAt == null) {
+            spawnAt = owner.getLocation().clone().add(0, 0.1, 0);
+        }
         bot.setHome(owner.getLocation());
         bot.setLastLocation(spawnAt);
 
@@ -326,7 +412,35 @@ public class CrewManager {
     }
 
     /**
-     * Remove every crew bot and wipe leftover Citizens NPCs (by name, mark, and id sweep).
+     * Remove world/Citizens leftovers for a name that is no longer in bots.yml.
+     * Used by /crew dismiss when the registry entry is already gone.
+     *
+     * @return number of entities / NPCs removed
+     */
+    public int dismissOrphanByName(String name) {
+        if (name == null || name.isBlank()) {
+            return 0;
+        }
+        String clean = name.trim();
+        int n = 0;
+        n += com.aibots.npc.EntityCleanup.removeCrewBodiesNamed(clean);
+        n += com.aibots.npc.CitizensHandle.destroyByName(clean);
+        // Also match title-plate variants if bare name missed something
+        if (n == 0) {
+            n += com.aibots.npc.EntityCleanup.removeAllLikelyCrewBodiesMatching(clean);
+        }
+        if (n > 0) {
+            plugin.getLogger().info("Orphan dismiss removed " + n + " for name=" + clean);
+            try {
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
+            } catch (Throwable ignored) {
+            }
+        }
+        return n;
+    }
+
+    /**
+     * Remove every crew bot and wipe leftover Citizens NPCs + world villager bodies.
      */
     public int purgeAll() {
         int n = 0;
@@ -353,6 +467,9 @@ public class CrewManager {
         for (String name : names) {
             n += com.aibots.npc.EntityCleanup.removeCrewBodiesNamed(name);
         }
+        // Catch leftovers not in registry (the Rusty-after-clear-on-load case)
+        n += com.aibots.npc.EntityCleanup.removeAllLikelyCrewBodies();
+        n += com.aibots.npc.EntityCleanup.removeCrewBodiesNamed("Rusty");
         try {
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "citizens save");
         } catch (Throwable ignored) {
@@ -387,29 +504,101 @@ public class CrewManager {
                 "Home is at " + home.getBlockX() + "," + home.getBlockY() + "," + home.getBlockZ()
                         + " in " + (home.getWorld() == null ? "?" : home.getWorld().getName()),
                 "owner", true);
-        if (bot.getTitle() == BotTitle.SCAVENGER) {
-            chestNetwork.setHub(home.clone().add(2, 0, 0));
+        if (bot.getTitle() != null && bot.getTitle().isGatherer()) {
+            // Hub at home floor — placement logic finds free adjacent floor tiles
+            chestNetwork.setHub(home);
+            // Place storage now so it goes next to you, not later when bot is outside
             chestNetwork.ensureStorageNear(home);
         }
         save();
         learning.save();
     }
 
-    public void assign(CrewBot bot, String order) {
-        bot.setCurrentOrder(order);
-        bot.setStatus(BotStatus.BUSY);
+    /**
+     * Assign an order. For gather titles, surveys nearby resources and may wait for a choice
+     * if a specific material is far (e.g. spruce when only oak is close).
+     *
+     * @return messages from the bot (distance / alternatives / choices); empty if none
+     */
+    public java.util.List<String> assign(CrewBot bot, String order) {
         bot.remember("Order: " + order);
         learning.observe(bot, "assign", order, true, bot.getTitle().name());
         learning.learnFromPlayerChat(bot, "owner", "Your order: " + order);
-        if (bot.getTitle() == BotTitle.SCAVENGER) {
-            scavengeSkill.parseOrder(bot, order);
+
+        java.util.List<String> botLines = new java.util.ArrayList<>();
+        BotTitle title = bot.getTitle();
+        if (title != null && title.isGatherer()) {
+            Location from = null;
+            NpcHandle body = bodyOf(bot);
+            if (body != null && body.isValid()) {
+                from = body.getLocation();
+            }
+            if (from == null) {
+                from = bot.getHome();
+            }
+            var plan = scavengeSkill.planOrder(bot, order, from);
+            botLines.addAll(plan.messages);
+            if (plan.startWork && title == BotTitle.MINER) {
+                String lower = order.toLowerCase(java.util.Locale.ROOT);
+                if (lower.contains("recipe") || lower.contains("craft") || lower.contains("how")
+                        || lower.contains("tool") || lower.contains("pick") || lower.contains("anvil")
+                        || lower.contains("repair")) {
+                    for (String line : scavengeSkill.minerTools().recipeHelpLines()) {
+                        botLines.add(org.bukkit.ChatColor.GRAY + "  " + line);
+                    }
+                } else {
+                    botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.GRAY
+                            + ": I'll use the right pickaxe tier for the job, craft a table if needed, "
+                            + "and prefer anvil repair over crafting new tools when picks wear out.");
+                }
+            }
+            if (plan.startWork) {
+                bot.setCurrentOrder(order);
+                bot.setStatus(BotStatus.BUSY);
+            }
+        } else if (title != null && title.isCombat()) {
+            bot.setCurrentOrder(order);
+            bot.setStatus(BotStatus.BUSY);
+            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.WHITE
+                    + ": Guarding — I'll fight hostiles near you/home until stopped.");
+        } else if (title != null && title.isHunter()) {
+            bot.setCurrentOrder(order);
+            bot.setStatus(BotStatus.BUSY);
+            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.WHITE
+                    + ": Hunting nearby animals for food. I'll fill my bag and deposit.");
+        } else if (title != null && title.isFarmer()) {
+            bot.setCurrentOrder(order);
+            bot.setStatus(BotStatus.BUSY);
+            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.WHITE
+                    + ": Working the fields — harvest mature crops and replant.");
+        } else if (title == BotTitle.BUILDER) {
+            Location from = null;
+            NpcHandle body = bodyOf(bot);
+            if (body != null && body.isValid()) {
+                from = body.getLocation();
+            }
+            if (from == null) {
+                from = bot.getHome();
+            }
+            if (from == null) {
+                Player owner = Bukkit.getPlayer(bot.getOwnerId());
+                if (owner != null) {
+                    from = owner.getLocation();
+                }
+            }
+            botLines.addAll(builderSkill.startJob(bot, order, from));
+        } else {
+            bot.setCurrentOrder(order);
+            bot.setStatus(BotStatus.BUSY);
         }
         save();
+        return botLines;
     }
 
     public void stop(CrewBot bot) {
         bot.setCurrentOrder(null);
         bot.setStatus(BotStatus.STOPPED);
+        builderSkill.clear(bot);
         bot.remember("Stopped");
         learning.observe(bot, "stop", "Stopped by owner", true, null);
         save();
@@ -425,18 +614,89 @@ public class CrewManager {
                 rosterSummary(),
                 learning.promptContext(bot)
         );
-        llm.chatAsync(system, playerMessage).thenAccept(reply ->
+        LLMContext.Complexity complexity = looksComplex(playerMessage)
+                ? LLMContext.Complexity.COMPLEX
+                : LLMContext.Complexity.SIMPLE;
+        LLMContext.TaskType taskType = taskTypeFor(bot.getTitle());
+        LLMContext ctx = LLMContext.builder()
+                .botName(bot.getName())
+                .botId(bot.getId())
+                .title(bot.getTitle())
+                .taskType(taskType)
+                .complexity(complexity)
+                .build();
+        llm.generateResponseAsync(system, playerMessage, ctx).thenAccept(reply ->
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     String line = ChatColor.AQUA + "[" + bot.getName() + "] " + ChatColor.WHITE + reply;
                     Bukkit.broadcastMessage(line);
                     bot.remember("Player: " + playerMessage);
                     bot.remember("Me: " + reply);
                     learning.observe(bot, "chat", "Replied to player", true, truncate(reply, 80));
+                    // Detect "ask X for …" / "tell Y to …" for inter-bot messaging
+                    maybeRelayToTeammate(bot, playerMessage, reply);
                     if (replyTo != null && !(replyTo instanceof Player)) {
                         replyTo.sendMessage(line);
                     }
                 })
         );
+    }
+
+    private void maybeRelayToTeammate(CrewBot from, String playerMessage, String reply) {
+        if (playerMessage == null) {
+            return;
+        }
+        String lower = playerMessage.toLowerCase(Locale.ROOT);
+        // "ask MinerBob to gather oak" / "tell Rusty to mine iron"
+        if (!(lower.contains("ask ") || lower.contains("tell ") || lower.contains("send "))) {
+            return;
+        }
+        for (CrewBot other : botsOwnedBy(from.getOwnerId())) {
+            if (other.getId().equals(from.getId())) {
+                continue;
+            }
+            String n = other.getName().toLowerCase(Locale.ROOT);
+            if (lower.contains(n) || lower.contains(other.getTitle().display().toLowerCase(Locale.ROOT))) {
+                String body = playerMessage;
+                int idx = lower.indexOf(n);
+                if (idx >= 0) {
+                    // try to take text after the name
+                    int after = idx + n.length();
+                    if (after < playerMessage.length()) {
+                        body = playerMessage.substring(after).replaceFirst("^(?i)\\s*(to|,)\\s*", "").trim();
+                    }
+                }
+                if (body.isBlank()) {
+                    body = playerMessage;
+                }
+                messenger.send(from, other, BotMessage.Kind.DELEGATE, body);
+                return;
+            }
+        }
+    }
+
+    private static boolean looksComplex(String msg) {
+        if (msg == null) {
+            return false;
+        }
+        String m = msg.toLowerCase(Locale.ROOT);
+        return m.length() > 120
+                || m.contains("plan")
+                || m.contains("design")
+                || m.contains("blueprint")
+                || m.contains("architecture")
+                || m.contains("how should we")
+                || m.contains("coordinate");
+    }
+
+    private static LLMContext.TaskType taskTypeFor(BotTitle title) {
+        if (title == null) {
+            return LLMContext.TaskType.CHAT;
+        }
+        return switch (title.kind()) {
+            case BUILD -> LLMContext.TaskType.BUILD;
+            case COMBAT -> LLMContext.TaskType.COMBAT;
+            case GATHER, HUNT, FARM -> LLMContext.TaskType.GATHER;
+        };
     }
 
     public void broadcastToOwned(Player owner, String message) {

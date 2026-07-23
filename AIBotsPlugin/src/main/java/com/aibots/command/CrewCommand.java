@@ -6,6 +6,7 @@ import com.aibots.crew.CrewBot;
 import com.aibots.crew.CrewManager;
 import com.aibots.npc.NpcHandle;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -58,10 +59,13 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                 case "teach", "learn" -> teach(sender, args);
                 case "memory", "brain" -> memory(sender, args);
                 case "share" -> share(sender, args);
+                case "msg", "message", "tell", "ask" -> interBotMsg(sender, args);
                 case "purge" -> purge(sender);
-                case "storage", "chests" -> storage(sender, args);
+                case "storage", "chests", "stock", "has" -> storage(sender, args);
                 case "reload" -> reload(sender);
                 case "info" -> info(sender, args);
+                case "here", "come", "tp" -> here(sender, args);
+                case "find", "where" -> find(sender, args);
                 default -> sender.sendMessage(ChatColor.YELLOW + "Unknown subcommand. Try /" + label + " help");
             }
         } catch (IllegalArgumentException ex) {
@@ -88,10 +92,16 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " teach <name> [share] <fact...>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " memory <name>");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " share <from> <to> <topic...>");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " msg <from> <to> <message...>  "
+                + ChatColor.GRAY + "(inter-bot request/delegate)");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " info <name>");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " here <name>  " + ChatColor.GRAY + "(bring bot to you)");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " find <name>  " + ChatColor.GRAY + "(coords + respawn body if missing)");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " purge  " + ChatColor.GRAY + "(remove all crew + orphan Citizens NPCs)");
-        sender.sendMessage(ChatColor.YELLOW + "/" + label + " storage fix  " + ChatColor.GRAY + "(merge adjacent singles into double chests)");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " storage  " + ChatColor.GRAY + "list | <#> | has <item> | fix");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " has <item>  " + ChatColor.GRAY + "(how many in network)");
         sender.sendMessage(ChatColor.GRAY + "Titles: " + BotTitle.usageList());
+        sender.sendMessage(ChatColor.GRAY + "Builder: /crew assign Bob wall 5 cobble | platform 3x3 oak | pillar 4 | box 4x3x3");
         sender.sendMessage(ChatColor.GRAY + "All bots learn from teaching, chat, and experience (saved in learning.yml).");
         String mode = plugin.getConfig().getString("crew.avatar-mode", "villager");
         sender.sendMessage(ChatColor.GRAY + "Avatar mode: " + mode
@@ -124,9 +134,38 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(ChatColor.RED + "Usage: /crew dismiss <name>");
             return;
         }
-        CrewBot bot = requireBot(sender, args[1], true);
-        crew.dismiss(bot);
-        sender.sendMessage(ChatColor.GREEN + "Dismissed " + bot.getName() + ".");
+        String name = args[1];
+        // Registry bot → full dismiss; missing from bots.yml → still purge world bodies
+        var found = crew.findByName(name);
+        if (found.isPresent()) {
+            CrewBot bot = found.get();
+            if (sender instanceof Player player && !player.hasPermission("aibots.admin")) {
+                if (!bot.getOwnerId().equals(player.getUniqueId())) {
+                    throw new IllegalArgumentException("You do not own " + bot.getName() + ".");
+                }
+            }
+            crew.dismiss(bot);
+            sender.sendMessage(ChatColor.GREEN + "Dismissed " + bot.getName() + ".");
+            return;
+        }
+        int removed = crew.dismissOrphanByName(name);
+        if (removed > 0) {
+            sender.sendMessage(ChatColor.GREEN + "Removed " + removed
+                    + " leftover body/bodies named '" + name + "' (not in crew list).");
+        } else {
+            // Also try full world orphan sweep (loaded chunks only)
+            int swept = crew.sweepWorldOrphans();
+            if (swept > 0) {
+                sender.sendMessage(ChatColor.GREEN + "Swept " + swept
+                        + " leftover crew body/bodies from loaded chunks.");
+            } else {
+                sender.sendMessage(ChatColor.RED + "No bot named '" + name
+                        + "' in crew list, and no matching body in loaded chunks.");
+                sender.sendMessage(ChatColor.GRAY
+                        + "Stand near the leftover villager (so its chunk loads), then run /crew dismiss "
+                        + name + " or /crew purge again.");
+            }
+        }
     }
 
     private void list(CommandSender sender) {
@@ -179,10 +218,23 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         }
         CrewBot bot = requireBot(sender, args[1], true);
         String order = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
-        crew.assign(bot, order);
+        java.util.List<String> report = crew.assign(bot, order);
+        if (report != null && !report.isEmpty()) {
+            // Bot already surveyed and is speaking (distance / choices)
+            for (String line : report) {
+                sender.sendMessage(line);
+            }
+            if (bot.getStatus() == BotStatus.BUSY) {
+                sender.sendMessage(ChatColor.DARK_GRAY + "(working)");
+            } else {
+                sender.sendMessage(ChatColor.DARK_GRAY
+                        + "(waiting for your choice — force / alternate resource / stop)");
+            }
+            return;
+        }
         sender.sendMessage(ChatColor.GREEN + "Assigned " + bot.getName() + ": " + order);
-        // Phase 1: also have them acknowledge via LLM
-        crew.talk(bot, "Your owner assigned you this order: " + order + ". Acknowledge briefly and say what you'll do.", sender);
+        crew.talk(bot, "Your owner assigned you this order: " + order
+                + ". Acknowledge briefly and say what you'll do.", sender);
     }
 
     private void stop(CommandSender sender, String[] args) {
@@ -207,6 +259,54 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         CrewBot bot = requireBot(sender, args[1], true);
         crew.setHome(bot, player.getLocation());
         sender.sendMessage(ChatColor.GREEN + bot.getName() + " home set to your location.");
+    }
+
+    private void here(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(ChatColor.RED + "Players only.");
+            return;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew here <name>");
+            return;
+        }
+        CrewBot bot = requireBot(sender, args[1], true);
+        crew.bringHere(bot, player.getLocation());
+        NpcHandle body = crew.bodyOf(bot);
+        sender.sendMessage(ChatColor.GREEN + bot.getName() + " brought to you"
+                + (body != null && body.isValid() ? " (body OK)." : " (body still missing — try summon again)."));
+    }
+
+    private void find(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew find <name>");
+            return;
+        }
+        CrewBot bot = requireBot(sender, args[1], false);
+        NpcHandle body = crew.ensureBody(bot);
+        Location loc = body != null && body.isValid() ? body.getLocation() : bot.getLastLocation();
+        if (loc == null) {
+            loc = bot.getHome();
+        }
+        if (loc == null) {
+            sender.sendMessage(ChatColor.RED + bot.getName() + " has no known location.");
+            return;
+        }
+        boolean valid = body != null && body.isValid();
+        sender.sendMessage(ChatColor.GOLD + bot.getName() + ChatColor.WHITE
+                + " @ " + loc.getWorld().getName()
+                + " " + loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ()
+                + ChatColor.GRAY + " body=" + (valid ? "visible" : "was missing — respawned")
+                + " status=" + bot.getStatus()
+                + " order=" + (bot.getCurrentOrder() == null ? "-" : bot.getCurrentOrder()));
+        if (sender instanceof Player player) {
+            double d = player.getWorld().equals(loc.getWorld())
+                    ? player.getLocation().distance(loc) : -1;
+            if (d >= 0) {
+                sender.sendMessage(ChatColor.GRAY + "Distance from you: ~" + Math.round(d) + " blocks."
+                        + " Use /crew here " + bot.getName() + " to bring them.");
+            }
+        }
     }
 
     private void say(CommandSender sender, String[] args) {
@@ -289,6 +389,26 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         crew.talk(to, from.getName() + " just taught you about: " + topic + ". Acknowledge briefly.", sender);
     }
 
+    /** Inter-bot messaging: /crew msg <from> <to> <message...> */
+    private void interBotMsg(CommandSender sender, String[] args) {
+        if (args.length < 4) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew msg <from> <to> <message...>");
+            sender.sendMessage(ChatColor.GRAY + "Example: /crew msg Builder Miner gather cobblestone");
+            return;
+        }
+        CrewBot from = requireBot(sender, args[1], true);
+        CrewBot to = requireBot(sender, args[2], true);
+        String body = String.join(" ", Arrays.copyOfRange(args, 3, args.length));
+        com.aibots.crew.BotMessage.Kind kind = com.aibots.crew.BotMessage.Kind.DELEGATE;
+        String lower = body.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("need ") || lower.contains(" need ")) {
+            kind = com.aibots.crew.BotMessage.Kind.REQUEST;
+        }
+        crew.getMessenger().send(from, to, kind, body);
+        sender.sendMessage(ChatColor.GREEN + from.getName() + " → " + to.getName() + ": " + body);
+        sender.sendMessage(ChatColor.GRAY + "If " + to.getName() + " is idle, they may auto-start the work.");
+    }
+
     private void info(CommandSender sender, String[] args) {
         if (args.length < 2) {
             sender.sendMessage(ChatColor.RED + "Usage: /crew info <name>");
@@ -317,17 +437,123 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             // allow players who own bots to purge their mess; admins always
         }
         int n = crew.purgeAll();
-        sender.sendMessage(ChatColor.GREEN + "Purged crew entries / orphan Citizens NPCs (actions=" + n + ").");
+        sender.sendMessage(ChatColor.GREEN + "Purged crew + world bodies (actions=" + n + ").");
         sender.sendMessage(ChatColor.GRAY + "If a ghost remains, look at it and run: /npc remove");
     }
 
     private void storage(CommandSender sender, String[] args) {
-        if (args.length < 2 || !args[1].equalsIgnoreCase("fix")) {
-            sender.sendMessage(ChatColor.RED + "Usage: /crew storage fix");
+        var net = crew.getChestNetwork();
+        String sub = args.length >= 2 ? args[1].toLowerCase(Locale.ROOT) : "list";
+
+        // /crew has oak log  OR  /crew storage has oak log
+        if (args[0].equalsIgnoreCase("has") || args[0].equalsIgnoreCase("stock")) {
+            if (args.length < 2) {
+                sender.sendMessage(ChatColor.RED + "Usage: /crew has <item name>");
+                return;
+            }
+            String itemQ = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
+            sendStockReport(sender, itemQ);
             return;
         }
-        crew.getChestNetwork().forceReconnectAll();
-        sender.sendMessage(ChatColor.GREEN + "Tried to merge adjacent network chests into double chests. Look again.");
+        if (sub.equals("has") || sub.equals("count") || sub.equals("find")) {
+            if (args.length < 3) {
+                sender.sendMessage(ChatColor.RED + "Usage: /crew storage has <item name>");
+                return;
+            }
+            String itemQ = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
+            sendStockReport(sender, itemQ);
+            return;
+        }
+        if (sub.equals("fix")) {
+            net.forceReconnectAll();
+            sender.sendMessage(ChatColor.GREEN + "Tried to merge adjacent network chests into double chests.");
+            return;
+        }
+        if (sub.equals("list") || sub.equals("ls") || args.length < 2) {
+            var units = net.listUnits();
+            if (units.isEmpty()) {
+                sender.sendMessage(ChatColor.GRAY + "No storage chests yet. Set a scavenger home: /crew home <name>");
+                return;
+            }
+            sender.sendMessage(ChatColor.GOLD + "=== Storage network (" + units.size() + " chest"
+                    + (units.size() == 1 ? "" : "s") + ", free slots: " + net.freeSlots() + ") ===");
+            for (var u : units) {
+                sender.sendMessage(ChatColor.AQUA + " #" + u.number
+                        + ChatColor.WHITE + (u.doubleChest ? " double" : " single")
+                        + ChatColor.GRAY + " @ " + u.location.getBlockX() + "," + u.location.getBlockY()
+                        + "," + u.location.getBlockZ()
+                        + ChatColor.YELLOW + " items=" + u.totalItems()
+                        + ChatColor.DARK_GRAY + " free=" + u.freeSlots + "/" + u.size);
+            }
+            sender.sendMessage(ChatColor.GRAY + "Inspect one: /crew storage <#>   Stock: /crew has <item>");
+            return;
+        }
+        // /crew storage 1
+        try {
+            int num = Integer.parseInt(sub);
+            var unit = net.unit(num);
+            if (unit.isEmpty()) {
+                sender.sendMessage(ChatColor.RED + "No chest #" + num + ". Use /crew storage list");
+                return;
+            }
+            var u = unit.get();
+            sender.sendMessage(ChatColor.GOLD + "=== Chest #" + u.number
+                    + (u.doubleChest ? " (double)" : " (single)") + " ===");
+            sender.sendMessage(ChatColor.GRAY + "Location: " + u.location.getWorld().getName()
+                    + " " + u.location.getBlockX() + ", " + u.location.getBlockY() + ", " + u.location.getBlockZ());
+            sender.sendMessage(ChatColor.GRAY + "Slots: " + (u.size - u.freeSlots) + " used / "
+                    + u.freeSlots + " free / " + u.size + " total");
+            if (u.contents.isEmpty()) {
+                sender.sendMessage(ChatColor.DARK_GRAY + "  (empty)");
+            } else {
+                u.contents.entrySet().stream()
+                        .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                        .forEach(e -> sender.sendMessage(ChatColor.WHITE + "  • "
+                                + e.getKey().name().toLowerCase(Locale.ROOT).replace('_', ' ')
+                                + ChatColor.YELLOW + " x" + e.getValue()));
+            }
+        } catch (NumberFormatException e) {
+            sender.sendMessage(ChatColor.RED + "Usage: /crew storage [list|fix|has <item>|<#> ]");
+        }
+    }
+
+    private void sendStockReport(CommandSender sender, String itemQuery) {
+        var net = crew.getChestNetwork();
+        var tally = net.tallyMatching(itemQuery);
+        int total = tally.values().stream().mapToInt(Integer::intValue).sum();
+        if (total <= 0) {
+            sender.sendMessage(ChatColor.GOLD + "Storage: " + ChatColor.WHITE + "No \""
+                    + itemQuery + "\" in the chest network.");
+            return;
+        }
+        sender.sendMessage(ChatColor.GOLD + "Storage has " + ChatColor.YELLOW + total
+                + ChatColor.GOLD + " of \"" + itemQuery + "\":");
+        tally.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                .forEach(e -> sender.sendMessage(ChatColor.WHITE + "  • "
+                        + e.getKey().name().toLowerCase(Locale.ROOT).replace('_', ' ')
+                        + ChatColor.YELLOW + " x" + e.getValue()));
+        // Per-chest breakdown
+        for (var u : net.listUnits()) {
+            int inChest = 0;
+            StringBuilder bits = new StringBuilder();
+            for (var e : u.contents.entrySet()) {
+                String n = e.getKey().name().toLowerCase(Locale.ROOT).replace('_', ' ');
+                String q = itemQuery.toLowerCase(Locale.ROOT);
+                if (n.contains(q) || e.getKey().name().toLowerCase(Locale.ROOT)
+                        .contains(q.replace(' ', '_'))) {
+                    inChest += e.getValue();
+                    if (bits.length() > 0) {
+                        bits.append(", ");
+                    }
+                    bits.append(n).append(" x").append(e.getValue());
+                }
+            }
+            if (inChest > 0) {
+                sender.sendMessage(ChatColor.AQUA + "  chest #" + u.number + ChatColor.GRAY
+                        + ": " + bits);
+            }
+        }
     }
 
     private void reload(CommandSender sender) {
@@ -355,24 +581,32 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             return filter(args[0], List.of(
                     "help", "summon", "dismiss", "list", "title", "skin",
-                    "assign", "stop", "home", "say", "broadcast", "teach", "memory",
-                    "share", "info", "purge", "storage", "reload"
+                    "assign", "stop", "home", "here", "find", "say", "broadcast", "teach", "memory",
+                    "share", "msg", "ask", "info", "purge", "storage", "has", "stock", "reload"
             ));
         }
         if (args.length == 2) {
             String sub = args[0].toLowerCase(Locale.ROOT);
-            if (List.of("dismiss", "title", "skin", "assign", "stop", "home", "say", "info",
-                    "teach", "memory", "share").contains(sub)) {
+            if (List.of("dismiss", "title", "skin", "assign", "stop", "home", "here", "find", "say", "info",
+                    "teach", "memory", "share", "msg", "message", "tell", "ask").contains(sub)) {
                 return filter(args[1], crew.allBots().stream().map(CrewBot::getName).collect(Collectors.toList()));
             }
             if (sub.equals("summon")) {
                 return List.of("<name>");
             }
+            if (sub.equals("storage") || sub.equals("chests")) {
+                return filter(args[1], List.of("list", "has", "fix", "1", "2", "3"));
+            }
+            if (sub.equals("has") || sub.equals("stock")) {
+                return filter(args[1], List.of("oak_log", "cobblestone", "iron", "coal", "sand"));
+            }
         }
         if (args.length == 3) {
             String sub = args[0].toLowerCase(Locale.ROOT);
             if (sub.equals("summon") || sub.equals("title") || sub.equals("role")) {
-                return filter(args[2], List.of("scavenger", "warrior", "builder", "farmer"));
+                return filter(args[2], List.of(
+                        "scavenger", "miner", "woodsman", "hunter", "farmer",
+                        "warrior", "protector", "builder"));
             }
             if (sub.equals("skin")) {
                 return filter(args[2], List.of("Steve", "Alex"));
@@ -380,7 +614,8 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             if (sub.equals("teach")) {
                 return filter(args[2], List.of("share"));
             }
-            if (sub.equals("share")) {
+            if (sub.equals("share") || sub.equals("msg") || sub.equals("message")
+                    || sub.equals("tell") || sub.equals("ask")) {
                 return filter(args[2], crew.allBots().stream().map(CrewBot::getName).collect(Collectors.toList()));
             }
         }

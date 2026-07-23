@@ -32,7 +32,9 @@ public final class RolePrompts {
                 - Use learned facts and past experience when deciding how to answer or plan.
                 - You improve over time: acknowledge lessons and apply higher-confidence facts first.
                 - If the player teaches you ("remember…"), confirm you stored it.
-                - If you need materials or help, say which crew title you would ask.
+                - If you need materials or help, name which crewmate title or name you would ask.
+                - You can coordinate: player may say "ask Miner to gather iron" — acknowledge the hand-off.
+                - Builder: walls, platforms, pillars, box huts from cobble/planks in storage.
                 - Never invent server commands for the player; they use /crew.
                 - You can learn from teammates; shared crew knowledge applies to everyone.
                 """.formatted(
@@ -49,10 +51,14 @@ public final class RolePrompts {
 
     private static String defaultPersonality(BotTitle title) {
         return switch (title) {
-            case SCAVENGER -> "You scavenge resources and manage storage chests. You learn good resource spots.";
-            case WARRIOR -> "You protect the base and fight hostiles. You learn threats and trap spots.";
-            case BUILDER -> "You build structures. You learn preferred styles and materials.";
-            case FARMER -> "You farm food. You learn which crops and plots work best.";
+            case SCAVENGER -> "You scavenge whatever is nearest — mixed resources. You fill chests and learn good spots.";
+            case MINER -> "You know pickaxe tiers and recipes. Match pick tier to the block, smelt ore, prefer anvil repair.";
+            case WOODSMAN -> "You harvest trees, leaves, and forest plants.";
+            case HUNTER -> "You hunt wild animals for meat and drops. You avoid tamed pets.";
+            case FARMER -> "You harvest mature crops and replant seeds. You tend fields near home.";
+            case WARRIOR -> "You fight hostiles and can be ordered to attack/guard.";
+            case PROTECTOR -> "You guard the owner and home, patrol, and engage monsters automatically.";
+            case BUILDER -> "You build structures and learn preferred styles and materials.";
         };
     }
 }

@@ -1,3 +1,4 @@
+# Legacy single-endpoint config (still works; LLMRouter falls back here)
 lm-studio:
   base-url: "http://dadsbox.local:1234/v1"
   # Leave empty to use the first model reported by LM Studio
@@ -5,6 +6,43 @@ lm-studio:
   timeout-seconds: 60
   max-tokens: 400
   temperature: 0.7
+
+# Multi-LLM router (Phase 1) — optional cloud providers + complex-task escalation
+llm:
+  primary: lm-studio
+  # When true, COMPLEX prompts (plans, design, long messages) use escalate-to
+  escalate-complex: false
+  escalate-to: openai
+  providers:
+    lm-studio:
+      type: openai-compatible
+      base-url: "http://dadsbox.local:1234/v1"
+      model: "llama-3.2-8x3b-moe-dark-champion-instruct-uncensored-abliterated-18.4b"
+      timeout-seconds: 60
+      max-tokens: 400
+      temperature: 0.7
+    # Optional cloud (set api-key to enable). Leave blank to ignore.
+    openai:
+      type: openai-compatible
+      base-url: "https://api.openai.com/v1"
+      api-key: ""
+      model: "gpt-4o-mini"
+      timeout-seconds: 90
+      max-tokens: 600
+      temperature: 0.6
+    grok:
+      type: openai-compatible
+      base-url: "https://api.x.ai/v1"
+      api-key: ""
+      model: "grok-2-latest"
+      timeout-seconds: 90
+      max-tokens: 600
+      temperature: 0.7
+
+# Item stack size (vanilla component hard-cap is 99)
+items:
+  apply-max-stack: true
+  default-max-stack: 99
 
 crew:
   max-bots-per-player: 6
@@ -21,6 +59,15 @@ crew:
   tick-interval: 20
   chat-mention-enabled: true
   show-title-on-nameplate: true
+  # Personal loot bag size (multiple of 9, max 54 = double chest)
+  loot-slots: 54
+  # Pathfinder walk speed multiplier (keep near 1.0 — high values cause thrash)
+  walk-speed: 1.05
+  # How far bots survey before warning that a specific resource is "far"
+  survey-radius: 40
+  far-resource-blocks: 28
+  # Announce inter-bot messages to the owner in chat
+  inter-bot-announce: true
 
 learning:
   # If true, writes learning.yml on every observation (heavier I/O)
@@ -32,39 +79,65 @@ storage:
   prefer-double-chest: true
 
 titles:
+  # Generalist — notices nearest of logs, stone/ores, sand/gravel, etc.
   scavenger:
     display: "Scavenger"
     color: "GOLD"
-    personality: "You scavenge resources, fill chests, and expand storage when full. You help teammates who need materials. You learn good resource spots and storage habits."
+    personality: "You scavenge whatever useful resource is nearest. You fill chests and expand storage. You help teammates who need materials."
     gather-radius: 24
-    deposit-threshold: 8
-    # false = only gather after /crew assign <name> gather ...
+    # 0 = only deposit when loot bag is full; then resume until /crew stop
+    deposit-threshold: 0
     auto-when-idle: false
-    valued-materials:
-      - OAK_LOG
-      - BIRCH_LOG
-      - SPRUCE_LOG
-      - DARK_OAK_LOG
-      - ACACIA_LOG
-      - JUNGLE_LOG
-      - CHERRY_LOG
-      - COBBLESTONE
-      - STONE
-      - COAL_ORE
-      - IRON_ORE
-      - COPPER_ORE
-      - SAND
-      - GRAVEL
-      - CLAY
-  warrior:
-    display: "Warrior"
-    color: "RED"
-    personality: "You protect the base, fight hostiles, and request gear from scavengers when needed. You learn threats and defensive patterns."
-  builder:
-    display: "Builder"
-    color: "AQUA"
-    personality: "You construct buildings and structures. You request blocks from scavengers when short on materials. You learn preferred styles."
+    # Leave valued-materials empty to use built-in scavenger awareness (mixed).
+    valued-materials: []
+  # Pickaxe work — stone, deepslate, ores, netherrack, etc.
+  miner:
+    display: "Miner"
+    color: "DARK_GRAY"
+    personality: "You are a miner. You know pickaxe tiers and recipes (table, sticks, picks, furnace, anvil). You craft the right pick for the rock, smelt iron when needed, and prefer anvil repair over crafting brand-new tools when gear is damaged."
+    gather-radius: 28
+    deposit-threshold: 0
+    auto-when-idle: false
+    valued-materials: []
+  # Forest work — trees, leaves, flowers, saplings, mushrooms, vines
+  woodsman:
+    display: "Woodsman"
+    color: "DARK_GREEN"
+    personality: "You are a woodsman. You harvest the nearest trees, leaves, flowers, and forest plants. You keep the storage stocked with wood and flora."
+    gather-radius: 32
+    deposit-threshold: 0
+    auto-when-idle: false
+    valued-materials: []
+  hunter:
+    display: "Hunter"
+    color: "GOLD"
+    personality: "You hunt wild animals for meat and drops. You avoid tamed pets and deposit food to storage."
+    hunt-radius: 24
+    attack-damage: 5.0
+    auto-when-idle: false
   farmer:
     display: "Farmer"
     color: "GREEN"
-    personality: "You farm crops, replant fields, and supply food to the crew. You learn which plots and crops work best."
+    personality: "You harvest mature crops and replant seeds. You tend fields near home."
+    farm-radius: 20
+    auto-when-idle: false
+  warrior:
+    display: "Warrior"
+    color: "RED"
+    personality: "You fight hostiles on order and can patrol. You learn threats."
+    engage-radius: 16
+    attack-damage: 5.0
+    guard-owner: true
+    auto-when-idle: false
+  protector:
+    display: "Protector"
+    color: "DARK_RED"
+    personality: "You automatically guard the owner and home, patrol, and engage monsters."
+    engage-radius: 18
+    attack-damage: 4.0
+    guard-owner: true
+    auto-when-idle: true
+  builder:
+    display: "Builder"
+    color: "AQUA"
+    personality: "You construct buildings and structures. You build walls, platforms, pillars, and simple box huts from storage materials. When short on blocks you ask gatherers for help."

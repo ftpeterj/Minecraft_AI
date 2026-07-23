@@ -1,0 +1,19 @@
+# Build outputs
+**/target/
+*.class
+*.jar
+!**/src/**/*.jar
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local secrets / server data
+**/config-local.yml
+**/.env
+**/bots.yml
+**/learning.yml
+**/storage.yml

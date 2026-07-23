@@ -61,7 +61,7 @@ public final class EntityCleanup {
                     continue;
                 }
                 boolean tagged = entity.getScoreboardTags().contains(TAG);
-                String cn = entity.getCustomName();
+                String cn = resolveName(entity);
                 boolean nameMatch = false;
                 if (cn != null) {
                     String bare = bareName(cn).toLowerCase(Locale.ROOT);
@@ -117,7 +117,8 @@ public final class EntityCleanup {
                 if (!bodyType && !entity.getScoreboardTags().contains(TAG)) {
                     continue;
                 }
-                if (entity.getScoreboardTags().contains(TAG) || looksLikeCrewName(entity.getCustomName())) {
+                String cn = resolveName(entity);
+                if (entity.getScoreboardTags().contains(TAG) || looksLikeCrewName(cn)) {
                     entity.remove();
                     removed++;
                 }
@@ -132,10 +133,85 @@ public final class EntityCleanup {
         }
         String full = stripColor(customName).toLowerCase(Locale.ROOT);
         return full.contains("[scavenger]")
-                || full.contains("[warrior]")
-                || full.contains("[builder]")
+                || full.contains("[miner]")
+                || full.contains("[woodsman]")
+                || full.contains("[hunter]")
                 || full.contains("[farmer]")
+                || full.contains("[warrior]")
                 || full.contains("[protector]")
-                || full.contains("[fighter]");
+                || full.contains("[builder]")
+                || full.contains("[fighter]")
+                || full.contains("[guard]")
+                || full.contains("[lumberjack]");
+    }
+
+    /**
+     * Remove crew-like villager/armorstand whose bare name matches (case-insensitive).
+     * Broader than {@link #removeCrewBodiesNamed}: uses Adventure customName fallback
+     * and accepts any living entity that looks like a crew nameplate.
+     */
+    public static int removeAllLikelyCrewBodiesMatching(String botName) {
+        if (botName == null || botName.isBlank()) {
+            return 0;
+        }
+        String want = botName.trim().toLowerCase(Locale.ROOT);
+        int removed = 0;
+        for (World world : Bukkit.getWorlds()) {
+            for (Entity entity : world.getEntities()) {
+                if (entity instanceof Player || !(entity instanceof LivingEntity)) {
+                    continue;
+                }
+                boolean bodyType = entity instanceof org.bukkit.entity.Villager
+                        || entity instanceof org.bukkit.entity.ArmorStand;
+                if (!bodyType && !entity.getScoreboardTags().contains(TAG)) {
+                    continue;
+                }
+                String resolved = resolveName(entity);
+                if (resolved == null) {
+                    continue;
+                }
+                String bare = bareName(resolved).toLowerCase(Locale.ROOT);
+                String full = stripColor(resolved).toLowerCase(Locale.ROOT);
+                boolean nameMatch = bare.equals(want)
+                        || full.startsWith(want + " ")
+                        || full.startsWith(want + "[")
+                        || full.contains(want);
+                if (nameMatch && (entity.getScoreboardTags().contains(TAG)
+                        || looksLikeCrewName(resolved)
+                        || bodyType)) {
+                    entity.remove();
+                    removed++;
+                }
+            }
+        }
+        return removed;
+    }
+
+    /** Prefer legacy customName; fall back to Adventure component string. */
+    public static String resolveName(Entity entity) {
+        if (entity == null) {
+            return null;
+        }
+        String cn = entity.getCustomName();
+        if (cn != null && !cn.isBlank()) {
+            return cn;
+        }
+        try {
+            var component = entity.customName();
+            if (component != null) {
+                return net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+                        .plainText().serialize(component);
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            String name = entity.getName();
+            if (name != null && !name.isBlank() && !name.equalsIgnoreCase("Villager")
+                    && !name.equalsIgnoreCase("Armor Stand")) {
+                return name;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 }
