@@ -164,12 +164,8 @@ public final class BuilderSkill {
         }
 
         block.setType(job.material, true);
-        if (body instanceof VillagerHandle vh) {
-            vh.lookAt(placeAt.clone().add(0.5, 0.5, 0.5));
-        }
-        if (body.getEntity() instanceof LivingEntity living) {
-            living.swingMainHand();
-        }
+        body.lookAt(placeAt.clone().add(0.5, 0.5, 0.5));
+        body.swingMainHand();
         job.advance();
         learning.observe(bot, "build_place", job.material.name() + " @ " + block.getX() + "," + block.getY() + "," + block.getZ(),
                 true, job.material.name());

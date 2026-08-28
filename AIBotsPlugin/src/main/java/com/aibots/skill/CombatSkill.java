@@ -110,17 +110,10 @@ public final class CombatSkill {
         }
 
         body.stopWalking();
+        body.lookAt(tloc.clone().add(0, 1, 0));
+        body.swingMainHand();
         Entity ent = body.getEntity();
         if (ent instanceof LivingEntity living) {
-            living.swingMainHand();
-            if (living instanceof Mob mob) {
-                try {
-                    mob.lookAt(target);
-                } catch (Throwable ignored) {
-                }
-            } else if (body instanceof VillagerHandle vh) {
-                vh.lookAt(tloc.clone().add(0, 1, 0));
-            }
             // Melee hit
             try {
                 target.damage(damage, living);

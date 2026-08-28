@@ -3,6 +3,7 @@ package com.aibots.skill;
 import com.aibots.crew.BotStatus;
 import com.aibots.crew.BotTitle;
 import com.aibots.crew.CrewBot;
+import com.aibots.crew.RadiusService;
 import com.aibots.learn.LearningService;
 import com.aibots.npc.NpcHandle;
 import com.aibots.npc.NpcLocations;
@@ -38,7 +39,9 @@ public class ScavengeSkill {
     private final NpcService npcService;
     private final ChestNetwork chests;
     private final LearningService learning;
+    private final RadiusService radiusService;
     private final MinerTools minerTools;
+    private final RailHaulHelper railHaul;
     private final Map<UUID, Material> focusMaterial = new ConcurrentHashMap<>();
     private final Map<UUID, OrderFocus> orderFocus = new ConcurrentHashMap<>();
     /** Sticky nav + stuck detection per bot */
@@ -52,14 +55,22 @@ public class ScavengeSkill {
         Location lastPos;
         int stuckTicks;
         int repathCooldown;
+        boolean announcedReturn;
     }
 
     public ScavengeSkill(JavaPlugin plugin, NpcService npcService, ChestNetwork chests, LearningService learning) {
+        this(plugin, npcService, chests, learning, new RadiusService(plugin));
+    }
+
+    public ScavengeSkill(JavaPlugin plugin, NpcService npcService, ChestNetwork chests,
+                         LearningService learning, RadiusService radiusService) {
         this.plugin = plugin;
         this.npcService = npcService;
         this.chests = chests;
         this.learning = learning;
+        this.radiusService = radiusService != null ? radiusService : new RadiusService(plugin);
         this.minerTools = new MinerTools(plugin, chests, learning);
+        this.railHaul = new RailHaulHelper(plugin, chests);
     }
 
     public MinerTools minerTools() {
@@ -88,18 +99,15 @@ public class ScavengeSkill {
         skipBlocks.remove(bot.getId());
         navByBot.remove(bot.getId());
 
+        // Always apply focus + start work when we have an order. Waiting for chat
+        // confirmation left bots standing still ("Rusty isn't doing anything").
+        applyFocus(bot, focus, order);
         if (result.startWork) {
-            applyFocus(bot, focus, order);
             bot.setStatus(BotStatus.BUSY);
         } else {
-            // Hold work until player picks an option (force / alternative / stop)
-            orderFocus.put(bot.getId(), focus);
-            if (focus.specific() != null) {
-                focusMaterial.put(bot.getId(), focus.specific());
-            }
-            bot.setStatus(BotStatus.IDLE);
-            bot.setCurrentOrder(null);
-            learning.observe(bot, "plan", "Awaiting choice for " + focus.label(), false, order);
+            // Legacy false startWork — still engage so the body moves
+            bot.setStatus(BotStatus.BUSY);
+            learning.observe(bot, "plan", "Start (no wait) " + focus.label(), true, order);
         }
         return result;
     }
@@ -150,11 +158,17 @@ public class ScavengeSkill {
         String order = bot.getCurrentOrder();
         boolean auto = plugin.getConfig().getBoolean("titles." + tkey + ".auto-when-idle",
                 plugin.getConfig().getBoolean("titles.scavenger.auto-when-idle", false));
-        boolean ordered = order != null && looksLikeGather(order);
+        // Any non-blank order on a gatherer means work — not only keyword-matched phrases
+        boolean ordered = order != null && !order.isBlank();
+        boolean gatherWords = looksLikeGather(order);
         if (ordered && bot.getStatus() != BotStatus.STOPPED && bot.getStatus() != BotStatus.DISMISSED) {
-            bot.setStatus(BotStatus.BUSY);
+            // Non-gather phrases still allowed if player assigned them to a gatherer
+            if (gatherWords || bot.getStatus() == BotStatus.BUSY || bot.getStatus() == BotStatus.IDLE) {
+                bot.setStatus(BotStatus.BUSY);
+            }
         }
-        boolean shouldGather = ordered || (auto && bot.getStatus() == BotStatus.IDLE);
+        boolean shouldGather = (ordered && (gatherWords || bot.getStatus() == BotStatus.BUSY))
+                || (auto && (bot.getStatus() == BotStatus.IDLE || bot.getStatus() == BotStatus.BUSY));
 
         if (!shouldGather || bot.getStatus() == BotStatus.STOPPED) {
             return;
@@ -163,23 +177,27 @@ public class ScavengeSkill {
         chests.ensureStorageNear(home);
 
         int carried = bot.getLoot().totalItems();
-        // 0 or negative = deposit only when bag is full (keep gathering otherwise)
+        // 0 → 64 (an armful, like a player). Negative → wait until no empty slots.
         int depositThreshold = plugin.getConfig().getInt("titles." + tkey + ".deposit-threshold",
-                plugin.getConfig().getInt("titles.scavenger.deposit-threshold", 0));
-        int radius = plugin.getConfig().getInt("titles." + tkey + ".gather-radius",
-                plugin.getConfig().getInt("titles.scavenger.gather-radius", 24));
+                plugin.getConfig().getInt("titles.scavenger.deposit-threshold", 64));
+        int titleRadius = plugin.getConfig().getInt("titles." + tkey + ".gather-radius", 0);
+        int global = radiusService.effective();
+        // Title can raise the floor; global work-radius is the main knob (/crew radius)
+        int radius = titleRadius > 0 ? Math.max(titleRadius, global) : global;
+        if (!ordered) {
+            // Idle auto-scavenge uses at least title radius but not beyond effective global
+            radius = titleRadius > 0 ? Math.min(Math.max(titleRadius, 16), global) : Math.min(global, 32);
+        }
+        radius = radiusService.clamp(radius);
 
-        boolean bagFull = bot.getLoot().getInventory().firstEmpty() == -1;
-        boolean hitSoftCap = depositThreshold > 0 && carried >= depositThreshold;
-        // Only leave the field to deposit when full (or soft-cap if configured).
-        // Broken tools are handled in miner prep — bot keeps the gather order after.
-        if (bagFull || hitSoftCap) {
-            navByBot.remove(bot.getId());
-            deposit(bot, body, loc);
+        Nav nav = navByBot.computeIfAbsent(bot.getId(), id -> new Nav());
+        boolean timeToStash = bot.getLoot().shouldDeposit(depositThreshold);
+        if (timeToStash) {
+            announceReturn(bot, nav, carried);
+            deposit(bot, body, loc, home, nav);
             return;
         }
 
-        Nav nav = navByBot.computeIfAbsent(bot.getId(), id -> new Nav());
         updateStuck(nav, loc);
 
         Material focus = focusMaterial.get(bot.getId());
@@ -203,7 +221,7 @@ public class ScavengeSkill {
                 }
                 if (prep.action == MinerTools.PrepAction.NEED_MATERIALS && prep.gatherHint != null) {
                     // Dig prerequisite (wood/stone/iron/coal) with whatever we can
-                    Block prereq = findNearestMaterial(loc, radius, prep.gatherHint);
+                    Block prereq = findNearestMaterial(bot, loc, radius, prep.gatherHint);
                     if (prereq != null) {
                         target = prereq;
                     } else if (target != null && !canHarvestWithCurrentTools(bot, target.getType())) {
@@ -221,14 +239,36 @@ public class ScavengeSkill {
 
         if (target == null) {
             learning.observe(bot, "scavenge", "No valued blocks within " + radius, false, locBlockKey(loc));
-            // Idle near home — not frantic re-path
-            Location homeFeet = approachNear(home.getBlock(), loc);
-            if (homeFeet != null && loc.distanceSquared(homeFeet) > 4.0) {
-                stepToward(body, homeFeet, nav);
-            } else {
-                body.stopWalking();
+            // Expand once to full effective radius if title radius was smaller
+            int full = radiusService.effective();
+            if (radius < full) {
+                target = resolveTarget(bot, loc, full, focus, nav);
+                radius = full;
             }
-            return;
+            if (target == null) {
+                if (carried > 0) {
+                    announceReturn(bot, nav, carried);
+                    deposit(bot, body, loc, home, nav);
+                    return;
+                }
+                maybeAnnounce(bot, "No matching blocks within " + full
+                        + " — walking around home. "
+                        + "Try /crew radius " + Math.min(full + 32, radiusService.hardMax())
+                        + " or move me nearer resources. /crew stop " + bot.getName() + " to halt.");
+                // Patrol out from home so we discover new chunks/trees
+                Location roam = roamPoint(home, loc, nav, full);
+                if (roam != null && loc.distanceSquared(roam) > 2.25) {
+                    stepToward(body, roam, nav);
+                } else {
+                    Location homeFeet = approachNear(home.getBlock(), loc);
+                    if (homeFeet != null && loc.distanceSquared(homeFeet) > 4.0) {
+                        stepToward(body, homeFeet, nav);
+                    } else {
+                        body.stopWalking();
+                    }
+                }
+                return;
+            }
         }
 
         // Soft gate: don't waste time on ore we can't harvest yet (miner)
@@ -267,13 +307,17 @@ public class ScavengeSkill {
         // Within ~2.5 blocks of approach tile OR close enough to hit the resource
         double hitDistSq = loc.distanceSquared(target.getLocation().add(0.5, 0.5, 0.5));
         if (distSq > 6.25 && hitDistSq > 9.0) {
-            // Stuck circling? abandon this tree
-            if (nav.stuckTicks >= 5) {
+            // Stuck: nudge then abandon
+            if (nav.stuckTicks >= 3) {
+                nudgeToward(body, approach);
+            }
+            if (nav.stuckTicks >= 8) {
                 markSkip(bot, target);
                 body.stopWalking();
                 nav.stuckTicks = 0;
                 nav.targetKey = null;
                 nav.approach = null;
+                maybeAnnounce(bot, "Can't path to that block — picking another.");
                 return;
             }
             stepToward(body, approach, nav);
@@ -293,17 +337,8 @@ public class ScavengeSkill {
 
         Entity ent = body.getEntity();
         Location aim = target.getLocation().add(0.5, 0.6, 0.5);
-        if (body instanceof VillagerHandle vh) {
-            vh.lookAt(aim);
-        } else if (ent instanceof Mob mob) {
-            try {
-                mob.lookAt(aim);
-            } catch (Throwable ignored) {
-            }
-        }
-        if (ent instanceof LivingEntity living) {
-            living.swingMainHand();
-        }
+        body.lookAt(aim);
+        body.swingMainHand();
 
         ItemStack tool = toolForBlock(bot, type);
         Collection<ItemStack> drops = target.getDrops(tool != null ? tool : new ItemStack(Material.IRON_AXE));
@@ -343,6 +378,7 @@ public class ScavengeSkill {
             if (cur != null
                     && matchesBot(bot, cur.getType(), focus, valued, of)
                     && !isSkipped(bot.getId(), cur)
+                    && !tooCloseToStorage(bot, cur)
                     && cur.getLocation().distanceSquared(loc) <= (radius + 4) * (radius + 4.0)) {
                 return cur;
             }
@@ -388,14 +424,30 @@ public class ScavengeSkill {
         return s != null && s.contains(blockKey(b));
     }
 
-    private void deposit(CrewBot bot, NpcHandle body, Location loc) {
-        // Prefer a chest that still has empty slots
-        Location chestLoc = chests.nearestChestWithSpace(loc);
+    private void announceReturn(CrewBot bot, Nav nav, int carried) {
+        if (nav.announcedReturn) {
+            return;
+        }
+        nav.announcedReturn = true;
+        org.bukkit.entity.Player owner = bot.getOwnerPlayer();
+        if (owner != null && owner.isOnline()) {
+            org.bukkit.Bukkit.broadcastMessage("§f<" + bot.getName() + "> heading back to drop this off ("
+                    + carried + ")");
+        }
+    }
+
+    private void deposit(CrewBot bot, NpcHandle body, Location loc, Location home, Nav nav) {
+        // Always stash at home/storage hub — not a random chest in the woods
+        Location chestLoc = chests.nearestChestWithSpace(home != null ? home : loc);
         if (chestLoc == null) {
-            chestLoc = chests.ensureStorageNear(bot.getHome() != null ? bot.getHome() : loc);
+            chestLoc = chests.ensureStorageNear(home != null ? home : loc);
         }
         if (chestLoc == null) {
             learning.observe(bot, "deposit", "No chest available", false, null);
+            return;
+        }
+        // Far haul: lay rails + chest minecart when stocked
+        if (railHaul.tryHaulDeposit(bot, body, loc, chestLoc)) {
             return;
         }
         Location chestApproach = approachNear(chestLoc.getBlock(), loc);
@@ -403,7 +455,6 @@ public class ScavengeSkill {
             chestApproach = chestLoc.clone().add(0.5, 0, 0.5);
         }
         if (loc.distanceSquared(chestApproach) > 6.0) {
-            Nav nav = navByBot.computeIfAbsent(bot.getId(), id -> new Nav());
             stepToward(body, chestApproach, nav);
             return;
         }
@@ -471,23 +522,20 @@ public class ScavengeSkill {
         }
 
         if (depositedTotal > 0) {
+            nav.announcedReturn = false;
             bot.remember("Deposited " + depositedTotal + " items (storage free slots: "
                     + chests.freeSlots() + ", was " + freeBefore + ")");
             learning.observe(bot, "deposit", "Deposited " + depositedTotal + " items", true, null);
             learning.teach(bot, "Storage network accepts gathered materials into empty chest slots", "experience", true);
+            org.bukkit.entity.Player owner = bot.getOwnerPlayer();
+            if (owner != null && owner.isOnline()) {
+                org.bukkit.Bukkit.broadcastMessage("§f<" + bot.getName() + "> stashed "
+                        + depositedTotal + " — heading back out");
+            }
         }
 
-        // Keep working until /crew stop — deposit is only a pit stop when bag is full
-        if (looksLikeGather(bot.getCurrentOrder())) {
+        if (looksLikeGather(bot.getCurrentOrder()) || bot.getStatus() == BotStatus.BUSY) {
             bot.setStatus(BotStatus.BUSY);
-            if (depositedTotal > 0 && bot.getLoot().isEmpty()) {
-                org.bukkit.entity.Player owner = bot.getOwnerPlayer();
-                if (owner != null && owner.isOnline()) {
-                    owner.sendMessage(org.bukkit.ChatColor.GOLD + bot.getName()
-                            + org.bukkit.ChatColor.GRAY + ": Deposited haul — bag empty, resuming work. "
-                            + org.bukkit.ChatColor.DARK_GRAY + "/crew stop " + bot.getName() + " to halt.");
-                }
-            }
         } else if (bot.getLoot().isEmpty()) {
             bot.setStatus(BotStatus.IDLE);
         }
@@ -552,7 +600,8 @@ public class ScavengeSkill {
         BotTitle title = bot.getTitle();
         Block best = null;
         double bestD = Double.MAX_VALUE;
-        int r = Math.min(radius, 32);
+        // Honor requested radius (was hard-capped at 32 — ignored /crew radius)
+        int r = Math.min(Math.max(8, radius), radiusService.hardMax());
         int ox = origin.getBlockX();
         int oy = origin.getBlockY();
         int oz = origin.getBlockZ();
@@ -577,6 +626,9 @@ public class ScavengeSkill {
                         continue;
                     }
                     if (skip.contains(blockKey(b))) {
+                        continue;
+                    }
+                    if (tooCloseToStorage(bot, b)) {
                         continue;
                     }
                     if (approachNear(b, origin) == null) {
@@ -628,12 +680,27 @@ public class ScavengeSkill {
         return new ItemStack(Material.IRON_PICKAXE);
     }
 
-    private Block findNearestMaterial(Location origin, int radius, Material want) {
+    private boolean tooCloseToStorage(CrewBot bot, Block b) {
+        if (b == null) {
+            return false;
+        }
+        double r = plugin.getConfig().getDouble("crew.storage-keepout", 8.0);
+        Location at = b.getLocation().add(0.5, 0.5, 0.5);
+        Location home = bot.getHome();
+        if (home != null && home.getWorld() != null && at.getWorld() != null
+                && home.getWorld().equals(at.getWorld())
+                && at.distanceSquared(home) <= r * r) {
+            return true;
+        }
+        return chests.isNearAny(at, r);
+    }
+
+    private Block findNearestMaterial(CrewBot bot, Location origin, int radius, Material want) {
         if (origin == null || origin.getWorld() == null || want == null) {
             return null;
         }
         World world = origin.getWorld();
-        int r = Math.min(radius, 32);
+        int r = Math.min(Math.max(8, radius), radiusService.hardMax());
         Block best = null;
         double bestD = Double.MAX_VALUE;
         int ox = origin.getBlockX();
@@ -661,6 +728,9 @@ public class ScavengeSkill {
                     if (!ok) {
                         continue;
                     }
+                    if (bot != null && tooCloseToStorage(bot, b)) {
+                        continue;
+                    }
                     if (approachNear(b, origin) == null) {
                         continue;
                     }
@@ -673,6 +743,63 @@ public class ScavengeSkill {
             }
         }
         return best;
+    }
+
+    private final Map<UUID, Long> lastAnnounceMs = new ConcurrentHashMap<>();
+
+    private void maybeAnnounce(CrewBot bot, String msg) {
+        if (bot == null || msg == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Long prev = lastAnnounceMs.get(bot.getId());
+        if (prev != null && now - prev < 12_000L) {
+            return;
+        }
+        lastAnnounceMs.put(bot.getId(), now);
+        bot.remember(msg);
+        org.bukkit.entity.Player owner = bot.getOwnerPlayer();
+        if (owner != null && owner.isOnline()) {
+            owner.sendMessage(org.bukkit.ChatColor.GOLD + bot.getName()
+                    + org.bukkit.ChatColor.GRAY + ": " + msg);
+        }
+    }
+
+    /** When stuck, teleport a short step toward the goal so work continues. */
+    private void nudgeToward(NpcHandle body, Location target) {
+        if (body == null || target == null || !body.isValid()) {
+            return;
+        }
+        Location from = body.getLocation();
+        if (from == null || from.getWorld() == null || !from.getWorld().equals(target.getWorld())) {
+            return;
+        }
+        double dx = target.getX() - from.getX();
+        double dz = target.getZ() - from.getZ();
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < 0.3) {
+            return;
+        }
+        double step = Math.min(1.4, dist);
+        Location mid = from.clone().add(dx / dist * step, 0, dz / dist * step);
+        mid = NpcLocations.snapToStand(mid);
+        if (mid != null) {
+            body.teleport(mid);
+            body.walkTo(target, plugin.getConfig().getDouble("crew.walk-speed", 1.05));
+        }
+    }
+
+    private Location roamPoint(Location home, Location from, Nav nav, int workRadius) {
+        if (home == null || home.getWorld() == null) {
+            return null;
+        }
+        // Cycle compass points out toward work radius (not stuck in 12-block circle)
+        int phase = (nav.stuckTicks + (int) (System.currentTimeMillis() / 5000L)) & 7;
+        double angle = phase * (Math.PI / 4.0);
+        double maxR = Math.max(12, Math.min(workRadius * 0.6, workRadius - 4));
+        double r = 8 + (phase % 4) * (maxR / 4.0);
+        Location p = home.clone().add(Math.cos(angle) * r, 0, Math.sin(angle) * r);
+        return NpcLocations.snapToStand(p);
     }
 
     private void stepToward(NpcHandle body, Location target, Nav nav) {

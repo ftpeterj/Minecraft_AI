@@ -244,10 +244,123 @@ public final class NpcLocations {
         if (!isSolidGround(below.getType())) {
             return false;
         }
+        if (isWatery(feet.getType()) || isWatery(head.getType())) {
+            return false;
+        }
         if (!isPassable(feet.getType()) || !isPassable(head.getType())) {
             return false;
         }
         return true;
+    }
+
+    public static boolean isWatery(Material type) {
+        if (type == null) {
+            return false;
+        }
+        if (type == Material.WATER || type == Material.BUBBLE_COLUMN
+                || type == Material.KELP || type == Material.KELP_PLANT
+                || type == Material.SEAGRASS || type == Material.TALL_SEAGRASS) {
+            return true;
+        }
+        String n = type.name();
+        return n.contains("WATER");
+    }
+
+    /**
+     * If the body is inside a solid or in water, teleport to nearby dry footing.
+     */
+    public static boolean unstick(Entity entity) {
+        if (entity == null || !entity.isValid() || entity.isDead()) {
+            return false;
+        }
+        Location loc = entity.getLocation();
+        World world = loc.getWorld();
+        if (world == null) {
+            return false;
+        }
+        Block feet = loc.getBlock();
+        Block head = loc.clone().add(0, 1, 0).getBlock();
+        boolean inSolid = feet.getType().isSolid() && !isPassable(feet.getType());
+        boolean inWater = isWatery(feet.getType()) || isWatery(head.getType());
+        boolean standing = canStandAt(world, loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
+        if (!inSolid && !inWater && standing) {
+            return false;
+        }
+        Location dry = findDryStandNear(loc, 5);
+        if (dry == null) {
+            return false;
+        }
+        dry.setYaw(loc.getYaw());
+        dry.setPitch(0f);
+        entity.teleport(dry);
+        return true;
+    }
+
+    public static Location findDryStandNear(Location loc, int radius) {
+        if (loc == null || loc.getWorld() == null) {
+            return null;
+        }
+        World world = loc.getWorld();
+        int ox = loc.getBlockX();
+        int oy = loc.getBlockY();
+        int oz = loc.getBlockZ();
+        if (canStandAt(world, ox, oy, oz)) {
+            return new Location(world, ox + 0.5, oy, oz + 0.5, loc.getYaw(), 0f);
+        }
+        for (int r = 1; r <= Math.max(1, radius); r++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.abs(dx) != r && Math.abs(dz) != r && r > 0) {
+                        continue;
+                    }
+                    for (int dy = 0; dy <= 2; dy++) {
+                        for (int sign : new int[]{0, 1, -1}) {
+                            if (dy == 0 && sign != 0) {
+                                continue;
+                            }
+                            int fy = oy + sign * dy;
+                            if (canStandAt(world, ox + dx, fy, oz + dz)) {
+                                return new Location(world, ox + dx + 0.5, fy, oz + dz + 0.5, loc.getYaw(), 0f);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return snapToStand(loc);
+    }
+
+    /**
+     * Snap a location to a standable foot position in the same column (or nearby).
+     * Used when nudging stuck crew bodies.
+     */
+    public static Location snapToStand(Location loc) {
+        if (loc == null || loc.getWorld() == null) {
+            return null;
+        }
+        World world = loc.getWorld();
+        int x = loc.getBlockX();
+        int z = loc.getBlockZ();
+        int preferY = loc.getBlockY();
+        int gy = groundYNear(world, x, preferY, z);
+        if (canStandAt(world, x, gy, z)) {
+            return new Location(world, x + 0.5, gy, z + 0.5, loc.getYaw(), 0f);
+        }
+        // Try adjacent columns
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+                int nx = x + dx;
+                int nz = z + dz;
+                int ny = groundYNear(world, nx, preferY, nz);
+                if (canStandAt(world, nx, ny, nz)) {
+                    return new Location(world, nx + 0.5, ny, nz + 0.5, loc.getYaw(), 0f);
+                }
+            }
+        }
+        return loc.clone();
     }
 
     /** True if moving from→to doesn't clip through solid blocks at body height. */
@@ -363,6 +476,10 @@ public final class NpcLocations {
      */
     public static boolean applyGravity(Entity entity) {
         if (entity == null || !entity.isValid() || entity.isDead()) {
+            return false;
+        }
+        // Citizens player NPCs have real gravity + navigator — don't snap them
+        if (entity instanceof org.bukkit.entity.Player) {
             return false;
         }
         // Don't fight active pathfinding — navigation handles slopes/steps

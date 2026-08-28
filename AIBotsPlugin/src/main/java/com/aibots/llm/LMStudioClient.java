@@ -30,10 +30,12 @@ public class LMStudioClient implements LLMProvider {
         delegate.setModel(model);
     }
 
+    @Override
     public String getModel() {
         return delegate.getModel();
     }
 
+    @Override
     public String getBaseUrl() {
         return delegate.getBaseUrl();
     }

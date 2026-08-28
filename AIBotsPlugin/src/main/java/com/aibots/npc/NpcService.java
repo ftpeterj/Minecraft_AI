@@ -1,8 +1,11 @@
 package com.aibots.npc;
 
+import com.aibots.crew.BotTitle;
 import com.aibots.crew.CrewBot;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.Locale;
@@ -13,7 +16,7 @@ import java.util.logging.Logger;
 
 /**
  * Spawns and tracks NPC bodies.
- * Default: native villagers (real body movement). Citizens player skins are black on Paper 26.
+ * Default: Citizens player NPCs (look like teammates). Villager/armorstand remain fallbacks.
  */
 public class NpcService {
 
@@ -28,7 +31,7 @@ public class NpcService {
         this.plugin = plugin;
         this.log = plugin.getLogger();
         this.citizensPresent = CitizensHandle.isCitizensPresent();
-        this.avatarMode = plugin.getConfig().getString("crew.avatar-mode", "villager").toLowerCase(Locale.ROOT);
+        this.avatarMode = plugin.getConfig().getString("crew.avatar-mode", "player").toLowerCase(Locale.ROOT);
         log.info("Avatar mode: " + avatarMode
                 + (citizensPresent ? " (Citizens present)" : " (no Citizens)"));
         // Physics every 2 ticks so NoAI villagers actually fall
@@ -43,7 +46,9 @@ public class NpcService {
             }
             org.bukkit.entity.Entity e = h.getEntity();
             if (e != null) {
-                NpcLocations.applyGravity(e);
+                if (!NpcLocations.unstick(e) && !(e instanceof org.bukkit.entity.Player)) {
+                    NpcLocations.applyGravity(e);
+                }
             }
         }
     }
@@ -193,6 +198,7 @@ public class NpcService {
         }, 5L);
 
         handles.put(bot.getId(), handle);
+        handle.equipMainHand(heldItemFor(bot.getTitle()));
         bot.setCitizensNpcId(handle.getCitizensId());
         bot.setLastLocation(at);
         log.info("Spawned " + bot.getName() + " via " + handle.backend()
@@ -213,6 +219,7 @@ public class NpcService {
         NpcHandle handle = handles.get(bot.getId());
         if (handle != null && handle.isValid()) {
             handle.setNameplate(coloredNameplate(bot));
+            handle.equipMainHand(heldItemFor(bot.getTitle()));
             if (handle instanceof VillagerHandle vh) {
                 vh.setProfessionForTitle(bot.getTitle());
             }
@@ -265,6 +272,19 @@ public class NpcService {
             return color + bot.getName() + ChatColor.GRAY + " [" + bot.getTitle().display() + "]";
         }
         return color + bot.getName();
+    }
+
+    private static ItemStack heldItemFor(BotTitle title) {
+        Material mat = switch (title == null ? BotTitle.SCAVENGER : title) {
+            case MINER -> Material.IRON_PICKAXE;
+            case WOODSMAN -> Material.IRON_AXE;
+            case SCAVENGER -> Material.STONE_PICKAXE;
+            case HUNTER -> Material.BOW;
+            case FARMER -> Material.IRON_HOE;
+            case WARRIOR, PROTECTOR -> Material.IRON_SWORD;
+            case BUILDER -> Material.IRON_SHOVEL;
+        };
+        return new ItemStack(mat);
     }
 
     private ChatColor chatColorFor(CrewBot bot) {

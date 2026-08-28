@@ -76,15 +76,15 @@ public final class HunterSkill {
         double range = plugin.getConfig().getDouble("titles.hunter.hunt-radius", 24);
         double damage = plugin.getConfig().getDouble("titles.hunter.attack-damage", 5.0);
 
-        // Deposit when bag full
-        if (bot.getLoot().getInventory().firstEmpty() == -1) {
+        int depositThreshold = plugin.getConfig().getInt("titles.hunter.deposit-threshold", 64);
+        if (bot.getLoot().shouldDeposit(depositThreshold)
+                || (bot.getLoot().totalItems() > 0 && findPrey(loc, range) == null)) {
             deposit(bot, body, loc, home);
             return;
         }
 
         LivingEntity prey = findPrey(loc, range);
         if (prey == null) {
-            // return toward home / wander slightly
             if (loc.distanceSquared(home) > 64) {
                 body.walkTo(home, 1.0);
             }
@@ -98,17 +98,10 @@ public final class HunterSkill {
         }
 
         body.stopWalking();
+        body.lookAt(tloc.clone().add(0, 0.5, 0));
+        body.swingMainHand();
         Entity ent = body.getEntity();
         if (ent instanceof LivingEntity living) {
-            living.swingMainHand();
-            if (body instanceof VillagerHandle vh) {
-                vh.lookAt(tloc.clone().add(0, 0.5, 0));
-            } else if (living instanceof Mob mob) {
-                try {
-                    mob.lookAt(prey);
-                } catch (Throwable ignored) {
-                }
-            }
             try {
                 prey.damage(damage, living);
             } catch (Throwable t) {
@@ -171,9 +164,9 @@ public final class HunterSkill {
 
     private void deposit(CrewBot bot, NpcHandle body, Location loc, Location home) {
         chests.ensureStorageNear(home);
-        Location chest = chests.nearestChestWithSpace(loc);
+        Location chest = chests.nearestChestWithSpace(home);
         if (chest == null) {
-            chest = chests.nearestChest(loc);
+            chest = chests.nearestChest(home);
         }
         if (chest == null) {
             return;

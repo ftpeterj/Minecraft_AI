@@ -41,6 +41,7 @@ public final class SkinApplier {
                 // Re-apply a moment later — entity may not be ready on first tick
                 Bukkit.getScheduler().runTaskLater(plugin, () -> applyFromOnlinePlayer(npc, online, plugin), 10L);
                 Bukkit.getScheduler().runTaskLater(plugin, () -> applyFromOnlinePlayer(npc, online, plugin), 40L);
+                Bukkit.getScheduler().runTaskLater(plugin, () -> applyFromOnlinePlayer(npc, online, plugin), 80L);
                 return;
             }
         }
@@ -65,6 +66,8 @@ public final class SkinApplier {
                     final Texture t = tex;
                     Bukkit.getScheduler().runTaskLater(plugin,
                             () -> applyPaperProfileFromTexture(npc, fetchName, t, plugin), 15L);
+                    Bukkit.getScheduler().runTaskLater(plugin,
+                            () -> applyPaperProfileFromTexture(npc, fetchName, t, plugin), 80L);
                 }
             });
         });

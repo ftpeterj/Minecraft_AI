@@ -2,6 +2,7 @@ package com.aibots.npc;
 
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
+import org.bukkit.inventory.ItemStack;
 
 /**
  * Opaque handle for a spawned crew body (villager / Citizens / ArmorStand).
@@ -47,4 +48,16 @@ public interface NpcHandle {
 
     /** Citizens NPC id if applicable; null for fallback. */
     Integer getCitizensId();
+
+    /** Put a tool in the main hand (player NPCs). */
+    default void equipMainHand(ItemStack item) {
+    }
+
+    /** Face a world location. */
+    default void lookAt(Location loc) {
+    }
+
+    /** Play a player arm-swing animation if the body supports it. */
+    default void swingMainHand() {
+    }
 }

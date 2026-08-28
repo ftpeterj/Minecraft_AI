@@ -233,7 +233,16 @@ public final class OrderPlanner {
             return nearest;
         }
         World world = origin.getWorld();
-        int r = Math.min(Math.max(radius, 16), 48);
+        // Cap survey cube for performance; work-radius can be higher via /crew radius
+        int hard = 128;
+        try {
+            hard = org.bukkit.Bukkit.getPluginManager().getPlugin("AIBots") != null
+                    ? Math.min(256, org.bukkit.Bukkit.getPluginManager().getPlugin("AIBots")
+                    .getConfig().getInt("crew.radius-hard-max", 512))
+                    : 128;
+        } catch (Throwable ignored) {
+        }
+        int r = Math.min(Math.max(radius, 16), Math.min(hard, 96));
         int ox = origin.getBlockX();
         int oy = origin.getBlockY();
         int oz = origin.getBlockZ();
@@ -267,8 +276,12 @@ public final class OrderPlanner {
     public static PlanResult plan(JavaPlugin plugin, CrewBot bot, OrderFocus focus, Location origin) {
         List<String> msgs = new ArrayList<>();
         String name = bot.getName();
-        int surveyR = plugin.getConfig().getInt("crew.survey-radius", 40);
-        double warnDist = plugin.getConfig().getDouble("crew.far-resource-blocks", 28);
+        int surveyR = plugin.getConfig().getInt("crew.work-radius",
+                plugin.getConfig().getInt("crew.survey-radius", 48));
+        // Session override if plugin has set it via RadiusService — read work-radius only from config
+        // (session is applied by ScavengeSkill; planOrder uses config + optional live effective)
+        double warnDist = plugin.getConfig().getDouble("crew.far-resource-blocks",
+                Math.max(28, surveyR * 0.6));
 
         Map<Material, SurveyHit> hits = survey(origin, focus, surveyR);
         List<SurveyHit> sorted = new ArrayList<>(hits.values());
@@ -291,28 +304,25 @@ public final class OrderPlanner {
                 return new PlanResult(focus, true, msgs);
             }
 
-            // Wood: if multiple species visible, ask single type vs any/mixed (unless force/any)
+            // Wood: multiple species → start mixed immediately (waiting for a reply looked idle)
             if (focus.category() == OrderFocus.Category.WOOD && !focus.force()) {
                 List<SpeciesHit> species = woodSpecies(scan);
                 if (species.size() >= 2) {
-                    msgs.add(ChatColor.GOLD + name + ChatColor.YELLOW
-                            + ": I see several kinds of wood near me. Do you want "
-                            + ChatColor.WHITE + "one type" + ChatColor.YELLOW + " or "
-                            + ChatColor.WHITE + "any/mixed" + ChatColor.YELLOW + "?");
-                    msgs.add(ChatColor.GRAY + "  Nearby:");
+                    msgs.add(ChatColor.GOLD + name + ChatColor.WHITE
+                            + ": Several wood types nearby — gathering "
+                            + ChatColor.YELLOW + "any/mixed" + ChatColor.WHITE
+                            + " now (nearest first).");
+                    msgs.add(ChatColor.GRAY + "  Prefer one type? "
+                            + ChatColor.AQUA + "/crew assign " + name + " get spruce"
+                            + ChatColor.GRAY + " (etc.)");
                     for (SpeciesHit s : species) {
-                        if (s.rank >= 5) {
+                        if (s.rank >= 4) {
                             break;
                         }
-                        msgs.add(ChatColor.WHITE + "  • " + s.name
-                                + ChatColor.GRAY + " (nearest ~" + Math.round(s.distance) + " blocks) — "
-                                + ChatColor.AQUA + "/crew assign " + name + " get " + s.name);
+                        msgs.add(ChatColor.DARK_GRAY + "  • " + s.name
+                                + " ~" + Math.round(s.distance) + " blocks");
                     }
-                    msgs.add(ChatColor.AQUA + "  • Any/mixed wood (fill bag, keep going): "
-                            + "/crew assign " + name + " gather any wood");
-                    msgs.add(ChatColor.DARK_GRAY + "  I'll wait — pick one option. "
-                            + "/crew stop " + name + " to cancel.");
-                    return new PlanResult(focus, false, msgs);
+                    return new PlanResult(focus, true, msgs);
                 }
             }
 
@@ -349,20 +359,17 @@ public final class OrderPlanner {
         if (wanted == null) {
             msgs.add(ChatColor.GOLD + name + ChatColor.YELLOW + ": I can't find "
                     + ChatColor.WHITE + focus.label() + ChatColor.YELLOW
-                    + " within ~" + surveyR + " blocks from here.");
-            if (alts.isEmpty()) {
-                msgs.add(ChatColor.GRAY + "  Nothing similar nearby either. Move me or "
-                        + ChatColor.AQUA + "/crew assign " + name + " force " + shortCmd(focus));
-            } else {
-                msgs.add(ChatColor.GRAY + "  Nearby instead:");
-                appendChoices(msgs, bot, alts, 5);
-                msgs.add(ChatColor.GRAY + "  Or search farther: "
-                        + ChatColor.AQUA + "/crew assign " + name + " force " + shortCmd(focus));
+                    + " within ~" + surveyR + " blocks — I'll keep searching farther.");
+            if (!alts.isEmpty()) {
+                msgs.add(ChatColor.GRAY + "  Closer alternatives exist if you want a switch:");
+                appendChoices(msgs, bot, alts, 3);
             }
-            return new PlanResult(focus, false, msgs);
+            msgs.add(ChatColor.DARK_GRAY + "  /crew stop " + name + " to cancel.");
+            // Still start work — standing idle "waiting for force" looked broken
+            return new PlanResult(focus, true, msgs);
         }
 
-        // Found specific — is it far compared to alternatives?
+        // Found specific — start immediately (warn if far; don't block on confirmation)
         boolean far = wanted.distance >= warnDist;
         SurveyHit nearestAlt = alts.isEmpty() ? null : alts.get(0);
         boolean altMuchCloser = nearestAlt != null
@@ -376,26 +383,19 @@ public final class OrderPlanner {
             return new PlanResult(focus, true, msgs);
         }
 
-        // Warn + choices
-        msgs.add(ChatColor.GOLD + name + ChatColor.YELLOW + ": "
+        msgs.add(ChatColor.GOLD + name + ChatColor.WHITE + ": "
                 + capitalize(focus.label()) + " is about "
-                + ChatColor.WHITE + Math.round(wanted.distance) + " blocks"
-                + ChatColor.YELLOW + " away — that'll take longer"
-                + (origin.getWorld() != null && isLikelyDesert(origin) && isStoneish(focus)
-                ? " (we're in sandy terrain)" : "") + ".");
-
-        if (!alts.isEmpty()) {
-            msgs.add(ChatColor.GRAY + "  Closer options near me:");
-            appendChoices(msgs, bot, alts, 5);
+                + ChatColor.YELLOW + Math.round(wanted.distance) + " blocks"
+                + ChatColor.WHITE + " away — going now.");
+        if (altMuchCloser && nearestAlt != null) {
+            msgs.add(ChatColor.GRAY + "  (Closer alt: "
+                    + OrderFocus.friendly(nearestAlt.material) + " ~"
+                    + Math.round(nearestAlt.distance) + " — "
+                    + ChatColor.AQUA + "/crew assign " + name + " get "
+                    + OrderFocus.friendly(nearestAlt.material) + ChatColor.GRAY + " to switch)");
         }
-        msgs.add(ChatColor.GRAY + "  Choices:");
-        msgs.add(ChatColor.AQUA + "  • Proceed anyway: /crew assign " + name + " force " + shortCmd(focus));
-        if (nearestAlt != null) {
-            msgs.add(ChatColor.AQUA + "  • Switch to nearest: /crew assign " + name + " get "
-                    + OrderFocus.friendly(nearestAlt.material));
-        }
-        msgs.add(ChatColor.AQUA + "  • Cancel: /crew stop " + name);
-        return new PlanResult(focus, false, msgs);
+        msgs.add(ChatColor.DARK_GRAY + "  /crew stop " + name + " to cancel.");
+        return new PlanResult(focus, true, msgs);
     }
 
     private static void appendChoices(List<String> msgs, CrewBot bot, List<SurveyHit> alts, int max) {

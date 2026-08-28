@@ -4,12 +4,22 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Multi-LLM provider abstraction (Phase 1).
- * Implementations: local LM Studio, OpenAI-compatible cloud APIs, etc.
+ * Implementations: local Ollama, LM Studio, OpenAI-compatible cloud APIs, etc.
  */
 public interface LLMProvider extends AutoCloseable {
 
-    /** Stable id used in config routing (e.g. "lm-studio", "openai", "grok"). */
+    /** Stable id used in config routing (e.g. "ollama", "lm-studio", "openai", "grok"). */
     String id();
+
+    /** Currently selected model id, or empty if unknown / not yet auto-selected. */
+    default String getModel() {
+        return "";
+    }
+
+    /** Endpoint the provider talks to, or empty if not network-backed. */
+    default String getBaseUrl() {
+        return "";
+    }
 
     /** Human-readable label for logs. */
     default String displayName() {

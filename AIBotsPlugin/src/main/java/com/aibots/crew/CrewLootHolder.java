@@ -77,6 +77,29 @@ public final class CrewLootHolder implements InventoryHolder {
         return totalItems() == 0;
     }
 
+    public boolean noEmptySlot() {
+        return inventory.firstEmpty() == -1;
+    }
+
+    /**
+     * Player-like: walk home after an armful.
+     * {@code threshold == 0} → 64 items; {@code threshold < 0} → only when every slot has something.
+     */
+    public boolean shouldDeposit(int threshold) {
+        int n = totalItems();
+        if (n <= 0) {
+            return false;
+        }
+        if (noEmptySlot()) {
+            return true;
+        }
+        if (threshold < 0) {
+            return false;
+        }
+        int t = threshold == 0 ? 64 : threshold;
+        return n >= t;
+    }
+
     /** @return leftover that did not fit */
     public ItemStack add(ItemStack stack) {
         if (stack == null || stack.getType().isAir()) {
@@ -143,5 +166,31 @@ public final class CrewLootHolder implements InventoryHolder {
             }
         }
         return list;
+    }
+
+    /** Aggregated counts by material (insertion order by first seen). */
+    public java.util.LinkedHashMap<org.bukkit.Material, Integer> tally() {
+        java.util.LinkedHashMap<org.bukkit.Material, Integer> map = new java.util.LinkedHashMap<>();
+        for (ItemStack s : inventory.getContents()) {
+            if (s == null || s.getType().isAir()) {
+                continue;
+            }
+            map.merge(s.getType(), s.getAmount(), Integer::sum);
+        }
+        return map;
+    }
+
+    public int usedSlots() {
+        int n = 0;
+        for (ItemStack s : inventory.getContents()) {
+            if (s != null && !s.getType().isAir()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    public int size() {
+        return inventory.getSize();
     }
 }

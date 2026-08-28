@@ -8,8 +8,8 @@ import com.aibots.listener.CrewInteractListener;
 import com.aibots.listener.OrphanBodyListener;
 import com.aibots.listener.StackSizeListener;
 import com.aibots.llm.LLMRouter;
-import com.aibots.llm.LMStudioClient;
 import com.aibots.npc.NpcService;
+import com.aibots.world.TreeHealer;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
@@ -21,22 +21,17 @@ public class AIBotsPlugin extends JavaPlugin {
     private LLMRouter llmRouter;
     private NpcService npcService;
     private StackSizeService stackSizeService;
+    private TreeHealer treeHealer;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
 
         llmRouter = new LLMRouter(getConfig(), getLogger());
-        LMStudioClient legacy = llmRouter.asLegacyClient();
-        getServer().getScheduler().runTaskAsynchronously(this, () -> {
-            boolean ok = llmRouter.healthCheck();
-            getLogger().info(ok
-                    ? "LLM primary '" + llmRouter.primaryId() + "' reachable"
-                    + " (model=" + legacy.getModel() + ", providers=" + llmRouter.providers().keySet() + ")"
-                    : "LLM primary NOT reachable — chat will fail until fixed.");
-        });
+        probeLlm();
 
         stackSizeService = new StackSizeService(this);
+        treeHealer = new TreeHealer(this);
 
         npcService = new NpcService(this);
         crewManager = new CrewManager(this, npcService, llmRouter);
@@ -72,6 +67,9 @@ public class AIBotsPlugin extends JavaPlugin {
         if (crewManager != null) {
             crewManager.shutdown();
         }
+        if (treeHealer != null) {
+            treeHealer.cancel();
+        }
         if (llmRouter != null) {
             llmRouter.close();
         }
@@ -80,5 +78,40 @@ public class AIBotsPlugin extends JavaPlugin {
 
     public CrewManager getCrewManager() {
         return crewManager;
+    }
+
+    public LLMRouter getLlmRouter() {
+        return llmRouter;
+    }
+
+    public TreeHealer getTreeHealer() {
+        return treeHealer;
+    }
+
+    /** Rebuild the LLM router from the current config.yml (used by /crew reload). */
+    public void reloadLlm() {
+        LLMRouter previous = llmRouter;
+        llmRouter = new LLMRouter(getConfig(), getLogger());
+        if (crewManager != null) {
+            crewManager.setLlm(llmRouter);
+        }
+        if (previous != null) {
+            previous.close();
+        }
+        probeLlm();
+    }
+
+    private void probeLlm() {
+        LLMRouter router = llmRouter;
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            boolean ok = router.healthCheck();
+            getLogger().info(ok
+                    ? "LLM primary '" + router.primaryId() + "' reachable"
+                    + " (model=" + router.getModel()
+                    + ", url=" + router.getBaseUrl()
+                    + ", fallback=" + router.fallbackToId()
+                    + ", providers=" + router.providers().keySet() + ")"
+                    : "LLM primary NOT reachable — chat will fail until Ollama or fallback is up.");
+        });
     }
 }

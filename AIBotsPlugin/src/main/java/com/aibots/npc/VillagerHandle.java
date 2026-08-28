@@ -182,11 +182,13 @@ public final class VillagerHandle implements NpcHandle {
         configureNavigator(villager);
 
         double spd = speed <= 0 ? 1.0 : Math.min(speed, 1.25);
-        // Path to standable feet position (center of block), not into solids
-        Location dest = target.clone();
-        dest.setX(dest.getBlockX() + 0.5);
-        dest.setY(dest.getY());
-        dest.setZ(dest.getBlockZ() + 0.5);
+        Location dest = NpcLocations.findDryStandNear(target, 3);
+        if (dest == null) {
+            dest = target.clone();
+            dest.setX(dest.getBlockX() + 0.5);
+            dest.setY(dest.getY());
+            dest.setZ(dest.getBlockZ() + 0.5);
+        }
 
         // Sticky path: don't re-issue every tick — that causes circle-walking
         long now = System.currentTimeMillis();
@@ -310,10 +312,21 @@ public final class VillagerHandle implements NpcHandle {
         return null;
     }
 
+    @Override
     public void lookAt(Location loc) {
         if (isValid() && loc != null) {
             try {
                 villager.lookAt(loc);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @Override
+    public void swingMainHand() {
+        if (isValid()) {
+            try {
+                villager.swingMainHand();
             } catch (Throwable ignored) {
             }
         }

@@ -82,7 +82,8 @@ public final class FarmerSkill {
         Location home = bot.getHome() != null ? bot.getHome() : loc;
         int radius = plugin.getConfig().getInt("titles.farmer.farm-radius", 20);
 
-        if (bot.getLoot().getInventory().firstEmpty() == -1) {
+        int depositThreshold = plugin.getConfig().getInt("titles.farmer.deposit-threshold", 64);
+        if (bot.getLoot().shouldDeposit(depositThreshold)) {
             deposit(bot, body, loc, home);
             return;
         }
@@ -117,12 +118,8 @@ public final class FarmerSkill {
         }
 
         body.stopWalking();
-        if (body.getEntity() instanceof LivingEntity living) {
-            living.swingMainHand();
-        }
-        if (body instanceof VillagerHandle vh) {
-            vh.lookAt(crop.getLocation().add(0.5, 0.5, 0.5));
-        }
+        body.lookAt(crop.getLocation().add(0.5, 0.5, 0.5));
+        body.swingMainHand();
 
         Material type = crop.getType();
         Material seed = SEED_FOR_CROP.getOrDefault(type, null);
@@ -286,9 +283,9 @@ public final class FarmerSkill {
 
     private void deposit(CrewBot bot, NpcHandle body, Location loc, Location home) {
         chests.ensureStorageNear(home);
-        Location chest = chests.nearestChestWithSpace(loc);
+        Location chest = chests.nearestChestWithSpace(home);
         if (chest == null) {
-            chest = chests.nearestChest(loc);
+            chest = chests.nearestChest(home);
         }
         if (chest == null) {
             return;

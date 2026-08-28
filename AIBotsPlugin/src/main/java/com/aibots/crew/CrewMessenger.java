@@ -30,6 +30,7 @@ public final class CrewMessenger {
     private final LearningService learning;
     private final ChestNetwork chests;
     private final Map<UUID, List<BotMessage>> inbox = new ConcurrentHashMap<>();
+    private CrewJobBoard jobBoard;
 
     public CrewMessenger(
             JavaPlugin plugin,
@@ -44,6 +45,10 @@ public final class CrewMessenger {
         this.botsOwnedBy = botsOwnedBy;
         this.learning = learning;
         this.chests = chests;
+    }
+
+    public void setJobBoard(CrewJobBoard jobBoard) {
+        this.jobBoard = jobBoard;
     }
 
     public void send(CrewBot from, CrewBot to, BotMessage.Kind kind, String body) {
@@ -104,6 +109,11 @@ public final class CrewMessenger {
                     break;
                 }
             }
+        }
+        // Always post a gather job so idle gatherers can claim even if target is busy
+        if (jobBoard != null) {
+            String order = "gather " + pretty(material);
+            jobBoard.post(from.getOwnerId(), from.getId(), prefer, order, 5);
         }
         if (target.isEmpty()) {
             return Optional.empty();

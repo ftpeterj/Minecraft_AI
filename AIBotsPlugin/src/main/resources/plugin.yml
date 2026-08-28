@@ -1,6 +1,6 @@
 name: AIBots
-version: '1.5.0'
-description: Multi-role AI crew — multi-LLM, inter-bot messaging, builder
+version: '1.6.5'
+description: Multi-role AI crew — player avatars, skills, Ollama, messaging
 main: com.aibots.AIBotsPlugin
 api-version: '1.21'
 author: ftpeterj
@@ -9,7 +9,7 @@ softdepend: [Citizens]
 commands:
   crew:
     description: Manage AI crew bots (summon, titles, learning, assign, chat, msg)
-    usage: /crew <summon|dismiss|list|title|skin|assign|stop|home|say|broadcast|msg|teach|memory|share|reload>
+    usage: /crew <summon|dismiss|list|title|assign|stop|jobs|msg|say|storage|teach|reload|llm>
     permission: aibots.crew
     aliases: [aibot, aicrew]
   aibot:

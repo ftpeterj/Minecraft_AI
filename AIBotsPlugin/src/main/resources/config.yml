@@ -1,4 +1,13 @@
-# Legacy single-endpoint config (still works; LLMRouter falls back here)
+# Native Ollama (primary). Leave model empty to use the first pulled model.
+# Ollama must listen on the LAN (OLLAMA_HOST=0.0.0.0) if the MC server is another box.
+ollama:
+  base-url: "http://dadsbox.local:11434"
+  model: "qwen2.5:14b"
+  timeout-seconds: 120
+  max-tokens: 400
+  temperature: 0.7
+
+# LM Studio kept as fallback if Ollama is down
 lm-studio:
   base-url: "http://dadsbox.local:1234/v1"
   # Leave empty to use the first model reported by LM Studio
@@ -7,13 +16,22 @@ lm-studio:
   max-tokens: 400
   temperature: 0.7
 
-# Multi-LLM router (Phase 1) — optional cloud providers + complex-task escalation
+# Multi-LLM router — primary Ollama, optional LM Studio fallback + cloud
 llm:
-  primary: lm-studio
+  primary: ollama
+  # If Ollama is unreachable, chat falls through to this provider
+  fallback-to: lm-studio
   # When true, COMPLEX prompts (plans, design, long messages) use escalate-to
   escalate-complex: false
   escalate-to: openai
   providers:
+    ollama:
+      type: ollama
+      base-url: "http://dadsbox.local:11434"
+      model: "qwen2.5:14b"
+      timeout-seconds: 120
+      max-tokens: 400
+      temperature: 0.7
     lm-studio:
       type: openai-compatible
       base-url: "http://dadsbox.local:1234/v1"
@@ -50,10 +68,10 @@ crew:
   clear-on-load: true
   # "owner" = use summoner's Minecraft username skin (recommended)
   default-skin: "owner"
-  # villager = native body + walk/swing (recommended on Paper 26)
+  # player / citizens = human player model + skin (needs Citizens)
+  # villager = native villager body (fallback if skins fail)
   # armorstand = player head + leather body
-  # citizens = full player model (often solid black on Paper 26.1)
-  avatar-mode: villager
+  avatar-mode: player
   # Extra blocks upward for model footing
   y-offset: 0.0
   tick-interval: 20
@@ -63,11 +81,27 @@ crew:
   loot-slots: 54
   # Pathfinder walk speed multiplier (keep near 1.0 — high values cause thrash)
   walk-speed: 1.05
-  # How far bots survey before warning that a specific resource is "far"
-  survey-radius: 40
+  # Default work/search radius (blocks). Was effectively capped at 48 before 1.5.7.
+  # Change with /crew radius default <n>  or session-only /crew radius <n>
+  # Don't mine/harvest this close to home or registered chests
+  storage-keepout: 8
+  work-radius: 48
+  survey-radius: 48
   far-resource-blocks: 28
+  # Warn (require "confirm") when setting radius above this
+  radius-warn-above: 200
+  radius-hard-min: 8
+  radius-hard-max: 512
+  # Long-haul: lay rails + chest minecart when deposit is far (needs rails in storage/bag)
+  rail-haul:
+    enabled: true
+    min-distance: 40
   # Announce inter-bot messages to the owner in chat
   inter-bot-announce: true
+  # Shared job board (idle bots claim matching open jobs)
+  job-board:
+    max-jobs: 64
+    claim-timeout-seconds: 300
 
 learning:
   # If true, writes learning.yml on every observation (heavier I/O)
@@ -77,6 +111,14 @@ storage:
   expand-when-full: true
   max-chests: 32
   prefer-double-chest: true
+  # Max blocks scanned by /crew storage register (like /fill volume)
+  register-max-volume: 200000
+  # If pos1/pos2 Y span is thinner than this, auto-expand height (room scan).
+  # Playtested: set pos1 on floor corner and pos2 on opposite CEILING / top of chest wall
+  # so the box is tall — flat same-floor corners miss wall chests.
+  register-min-y-thickness: 3
+  register-y-pad-below: 1
+  register-y-pad-above: 8
 
 titles:
   # Generalist — notices nearest of logs, stone/ores, sand/gravel, etc.
@@ -85,9 +127,10 @@ titles:
     color: "GOLD"
     personality: "You scavenge whatever useful resource is nearest. You fill chests and expand storage. You help teammates who need materials."
     gather-radius: 24
-    # 0 = only deposit when loot bag is full; then resume until /crew stop
-    deposit-threshold: 0
-    auto-when-idle: false
+    # Items in bag before walking home to stash (0 = 64, like a player armful). -1 = wait until every slot is used.
+    deposit-threshold: 64
+    # Scavenge nearest useful blocks even without a spoken order (after home is set)
+    auto-when-idle: true
     # Leave valued-materials empty to use built-in scavenger awareness (mixed).
     valued-materials: []
   # Pickaxe work — stone, deepslate, ores, netherrack, etc.
@@ -96,7 +139,7 @@ titles:
     color: "DARK_GRAY"
     personality: "You are a miner. You know pickaxe tiers and recipes (table, sticks, picks, furnace, anvil). You craft the right pick for the rock, smelt iron when needed, and prefer anvil repair over crafting brand-new tools when gear is damaged."
     gather-radius: 28
-    deposit-threshold: 0
+    deposit-threshold: 64
     auto-when-idle: false
     valued-materials: []
   # Forest work — trees, leaves, flowers, saplings, mushrooms, vines
@@ -105,7 +148,7 @@ titles:
     color: "DARK_GREEN"
     personality: "You are a woodsman. You harvest the nearest trees, leaves, flowers, and forest plants. You keep the storage stocked with wood and flora."
     gather-radius: 32
-    deposit-threshold: 0
+    deposit-threshold: 64
     auto-when-idle: false
     valued-materials: []
   hunter:

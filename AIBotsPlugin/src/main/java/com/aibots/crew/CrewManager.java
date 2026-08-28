@@ -7,11 +7,17 @@ import com.aibots.llm.LMStudioClient;
 import com.aibots.llm.RolePrompts;
 import com.aibots.npc.NpcHandle;
 import com.aibots.npc.NpcService;
+import com.aibots.skill.BuilderCrewSkill;
 import com.aibots.skill.BuilderSkill;
+import com.aibots.skill.CombatCrewSkill;
 import com.aibots.skill.CombatSkill;
+import com.aibots.skill.FarmerCrewSkill;
 import com.aibots.skill.FarmerSkill;
+import com.aibots.skill.GatherCrewSkill;
+import com.aibots.skill.HunterCrewSkill;
 import com.aibots.skill.HunterSkill;
 import com.aibots.skill.ScavengeSkill;
+import com.aibots.skill.SkillRegistry;
 import com.aibots.storage.ChestNetwork;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -40,15 +46,15 @@ public class CrewManager {
 
     private final JavaPlugin plugin;
     private final NpcService npcService;
-    private final LLMProvider llm;
+    private volatile LLMProvider llm;
     private final LearningService learning;
     private final ChestNetwork chestNetwork;
     private final ScavengeSkill scavengeSkill;
-    private final CombatSkill combatSkill;
-    private final HunterSkill hunterSkill;
-    private final FarmerSkill farmerSkill;
     private final BuilderSkill builderSkill;
+    private final SkillRegistry skills;
+    private final CrewJobBoard jobBoard;
     private final CrewMessenger messenger;
+    private final RadiusService radiusService;
     private final Map<UUID, CrewBot> botsById = new ConcurrentHashMap<>();
     private final Map<String, UUID> nameIndex = new ConcurrentHashMap<>();
     private final File botsFile;
@@ -61,11 +67,19 @@ public class CrewManager {
         this.llm = llm;
         this.learning = new LearningService(plugin);
         this.chestNetwork = new ChestNetwork(plugin);
-        this.scavengeSkill = new ScavengeSkill(plugin, npcService, chestNetwork, learning);
-        this.combatSkill = new CombatSkill(plugin, npcService, learning);
-        this.hunterSkill = new HunterSkill(plugin, npcService, chestNetwork, learning);
-        this.farmerSkill = new FarmerSkill(plugin, npcService, chestNetwork, learning);
+        this.radiusService = new RadiusService(plugin);
+        this.scavengeSkill = new ScavengeSkill(plugin, npcService, chestNetwork, learning, radiusService);
+        CombatSkill combatSkill = new CombatSkill(plugin, npcService, learning);
+        HunterSkill hunterSkill = new HunterSkill(plugin, npcService, chestNetwork, learning);
+        FarmerSkill farmerSkill = new FarmerSkill(plugin, npcService, chestNetwork, learning);
         this.builderSkill = new BuilderSkill(plugin, npcService, chestNetwork, learning);
+        this.skills = new SkillRegistry();
+        this.skills.register(new GatherCrewSkill(scavengeSkill));
+        this.skills.register(new CombatCrewSkill(combatSkill));
+        this.skills.register(new HunterCrewSkill(hunterSkill));
+        this.skills.register(new FarmerCrewSkill(farmerSkill));
+        this.skills.register(new BuilderCrewSkill(builderSkill));
+        this.jobBoard = new CrewJobBoard(plugin);
         this.messenger = new CrewMessenger(
                 plugin,
                 id -> Optional.ofNullable(botsById.get(id)),
@@ -75,12 +89,21 @@ public class CrewManager {
                 chestNetwork
         );
         this.builderSkill.setMessenger(messenger);
+        this.messenger.setJobBoard(jobBoard);
         this.botsFile = new File(plugin.getDataFolder(), "bots.yml");
     }
 
     /** Backward-compatible ctor. */
     public CrewManager(JavaPlugin plugin, NpcService npcService, LMStudioClient llm) {
         this(plugin, npcService, (LLMProvider) llm);
+    }
+
+    public LLMProvider getLlm() {
+        return llm;
+    }
+
+    public void setLlm(LLMProvider llm) {
+        this.llm = llm;
     }
 
     public LearningService getLearning() {
@@ -97,6 +120,56 @@ public class CrewManager {
 
     public BuilderSkill getBuilderSkill() {
         return builderSkill;
+    }
+
+    public CrewJobBoard getJobBoard() {
+        return jobBoard;
+    }
+
+    public RadiusService getRadiusService() {
+        return radiusService;
+    }
+
+    /**
+     * Immediately dump bot loot into the chest network (no walking required).
+     *
+     * @return items moved
+     */
+    public int forceDeposit(CrewBot bot) {
+        if (bot == null) {
+            return 0;
+        }
+        if (bot.getLoot().isEmpty()) {
+            return 0;
+        }
+        // Ensure network exists if home known
+        if (chestNetwork.getChests().isEmpty() && bot.getHome() != null) {
+            chestNetwork.ensureStorageNear(bot.getHome());
+        }
+        int before = bot.getLoot().totalItems();
+        int moved = chestNetwork.depositAll(bot.getLoot().getInventory());
+        // Retry once with expand if leftovers
+        if (!bot.getLoot().isEmpty()) {
+            Location anchor = chestNetwork.nearestChest(
+                    bot.getHome() != null ? bot.getHome() : bot.getLastLocation());
+            if (anchor != null || chestNetwork.getHub() != null) {
+                chestNetwork.expandChest(anchor != null ? anchor : chestNetwork.getHub());
+                moved += chestNetwork.depositAll(bot.getLoot().getInventory());
+            }
+        }
+        int after = bot.getLoot().totalItems();
+        int real = Math.max(moved, before - after);
+        if (real > 0) {
+            bot.remember("Force-deposited " + real + " items to storage network");
+            learning.observe(bot, "deposit", "Force-deposited " + real + " items", true, null);
+            save();
+            chestNetwork.save();
+        }
+        return real;
+    }
+
+    public SkillRegistry getSkills() {
+        return skills;
     }
 
     public void start() {
@@ -267,6 +340,9 @@ public class CrewManager {
     private void tick() {
         npcService.tickSyncLocations(botsById);
         tickCounter++;
+        if (tickCounter % 30 == 0) {
+            jobBoard.reclaimTimedOut();
+        }
         for (CrewBot bot : botsById.values()) {
             try {
                 // Keep body alive so work + walking can happen
@@ -278,17 +354,11 @@ public class CrewManager {
                 }
                 // Inter-bot inbox (delegation / material requests)
                 messenger.processInbox(bot, this::assign);
-                if (bot.getTitle().isGatherer()) {
-                    scavengeSkill.tick(bot);
-                } else if (bot.getTitle().isCombat()) {
-                    combatSkill.tick(bot);
-                } else if (bot.getTitle().isHunter()) {
-                    hunterSkill.tick(bot);
-                } else if (bot.getTitle().isFarmer()) {
-                    farmerSkill.tick(bot);
-                } else if (bot.getTitle() == BotTitle.BUILDER) {
-                    builderSkill.tick(bot);
-                }
+                // Idle bots claim open jobs from the board
+                maybeClaimJob(bot);
+                // Complete job when bot returns to IDLE after work
+                maybeCompleteJob(bot);
+                skills.tick(bot);
             } catch (Exception e) {
                 plugin.getLogger().warning("Tick error for " + bot.getName() + ": " + e.getMessage());
                 learning.observe(bot, "error", e.getMessage(), false, bot.getTitle().name());
@@ -298,6 +368,47 @@ public class CrewManager {
         if (tickCounter % 60 == 0) {
             learning.save();
             chestNetwork.save();
+        }
+    }
+
+    private void maybeClaimJob(CrewBot bot) {
+        if (bot.getStatus() != BotStatus.IDLE && bot.getStatus() != BotStatus.WAITING_HELP) {
+            return;
+        }
+        if (bot.getCurrentOrder() != null && !bot.getCurrentOrder().isBlank()) {
+            return;
+        }
+        Optional<CrewJob> claimed = jobBoard.tryClaim(bot);
+        if (claimed.isEmpty()) {
+            return;
+        }
+        CrewJob job = claimed.get();
+        List<String> lines = assign(bot, job.description());
+        Player owner = Bukkit.getPlayer(bot.getOwnerId());
+        if (owner != null && owner.isOnline()) {
+            owner.sendMessage(ChatColor.WHITE + "<" + bot.getName() + "> I'll take that — " + job.description());
+            for (String line : lines) {
+                owner.sendMessage(line);
+            }
+        }
+        // Release only if the skill did not take the order at all
+        if (bot.getCurrentOrder() == null || bot.getCurrentOrder().isBlank()) {
+            jobBoard.releaseBot(bot.getId());
+        }
+    }
+
+    private void maybeCompleteJob(CrewBot bot) {
+        Optional<CrewJob> active = jobBoard.activeFor(bot.getId());
+        if (active.isEmpty()) {
+            return;
+        }
+        // Job done when bot clears order and is idle after work
+        if (bot.getStatus() == BotStatus.IDLE
+                && (bot.getCurrentOrder() == null || bot.getCurrentOrder().isBlank())) {
+            jobBoard.completeForBot(bot.getId(), "idle");
+            learning.observe(bot, "job_done", active.get().description(), true, active.get().shortId());
+        } else if (bot.getStatus() == BotStatus.STOPPED || bot.getStatus() == BotStatus.DISMISSED) {
+            jobBoard.releaseBot(bot.getId());
         }
     }
 
@@ -329,6 +440,19 @@ public class CrewManager {
     }
 
     public CrewBot summon(Player owner, String name, BotTitle title, String skinOrNull) {
+        Location spawnAt = com.aibots.npc.NpcLocations.safeSummonInFront(owner, plugin);
+        if (spawnAt == null) {
+            spawnAt = owner.getLocation().clone().add(0, 0.1, 0);
+        }
+        return summonAt(owner.getUniqueId(), owner.getName(), owner.getLocation(), spawnAt,
+                name, title, skinOrNull);
+    }
+
+    /**
+     * Summon at an explicit location (console / automation friendly).
+     */
+    public CrewBot summonAt(UUID ownerId, String ownerName, Location home, Location spawnAt,
+                            String name, BotTitle title, String skinOrNull) {
         String clean = sanitizeName(name);
         if (clean.isEmpty()) {
             throw new IllegalArgumentException("Invalid name.");
@@ -336,12 +460,17 @@ public class CrewManager {
         if (findByName(clean).isPresent()) {
             throw new IllegalArgumentException("A bot named '" + clean + "' already exists.");
         }
+        if (ownerId == null) {
+            ownerId = new UUID(0L, 1L);
+        }
+        if (ownerName == null || ownerName.isBlank()) {
+            ownerName = "Console";
+        }
         int max = plugin.getConfig().getInt("crew.max-bots-per-player", 6);
-        if (botsOwnedBy(owner.getUniqueId()).size() >= max) {
-            throw new IllegalArgumentException("You already have " + max + " bots (max).");
+        if (botsOwnedBy(ownerId).size() >= max) {
+            throw new IllegalArgumentException("Owner already has " + max + " bots (max).");
         }
 
-        // Prefer owner's real skin so avatars look correct (Steve/Alex often fail Mojang lookup)
         String configuredDefault = plugin.getConfig().getString("crew.default-skin", "owner");
         String skin;
         if (skinOrNull != null && !skinOrNull.isBlank()) {
@@ -349,19 +478,21 @@ public class CrewManager {
         } else if (configuredDefault == null || configuredDefault.isBlank()
                 || configuredDefault.equalsIgnoreCase("owner")
                 || configuredDefault.equalsIgnoreCase("self")) {
-            skin = owner.getName();
+            skin = ownerName;
         } else {
             skin = configuredDefault.trim();
         }
 
-        CrewBot bot = new CrewBot(UUID.randomUUID(), clean, title, skin, owner.getUniqueId(), plugin);
-        bot.setStatus(BotStatus.IDLE);
-        // Horizontal in-front spawn on the player's floor (looking down used to bury bots)
-        Location spawnAt = com.aibots.npc.NpcLocations.safeSummonInFront(owner, plugin);
-        if (spawnAt == null) {
-            spawnAt = owner.getLocation().clone().add(0, 0.1, 0);
+        if (spawnAt == null || spawnAt.getWorld() == null) {
+            throw new IllegalArgumentException("Invalid spawn location.");
         }
-        bot.setHome(owner.getLocation());
+        if (home == null) {
+            home = spawnAt.clone();
+        }
+
+        CrewBot bot = new CrewBot(UUID.randomUUID(), clean, title, skin, ownerId, plugin);
+        bot.setStatus(BotStatus.IDLE);
+        bot.setHome(home);
         bot.setLastLocation(spawnAt);
 
         botsById.put(bot.getId(), bot);
@@ -369,16 +500,15 @@ public class CrewManager {
 
         learning.ensureBrain(bot);
         learning.shareAllSharedTo(bot);
-        learning.teach(bot, "My owner is " + owner.getName(), owner.getName(), false);
+        learning.teach(bot, "My owner is " + ownerName, ownerName, false);
         learning.teach(bot, "My starting title is " + title.display(), "system", false);
         learning.observe(bot, "summon", "Summoned into the world", true, title.name());
 
         npcService.spawnFor(bot, spawnAt);
-        // Do NOT auto-place chests or start scavenging on summon — wait for /crew assign
         save();
         learning.save();
 
-        bot.remember("Summoned by " + owner.getName() + " as " + title.display());
+        bot.remember("Summoned by " + ownerName + " as " + title.display());
         return bot;
     }
 
@@ -515,90 +645,61 @@ public class CrewManager {
     }
 
     /**
-     * Assign an order. For gather titles, surveys nearby resources and may wait for a choice
-     * if a specific material is far (e.g. spruce when only oak is close).
+     * Assign an order via {@link SkillRegistry}. Gather titles may survey and wait for a choice.
      *
      * @return messages from the bot (distance / alternatives / choices); empty if none
      */
     public java.util.List<String> assign(CrewBot bot, String order) {
         bot.remember("Order: " + order);
-        learning.observe(bot, "assign", order, true, bot.getTitle().name());
+        learning.observe(bot, "assign", order, true, bot.getTitle() == null ? null : bot.getTitle().name());
         learning.learnFromPlayerChat(bot, "owner", "Your order: " + order);
 
-        java.util.List<String> botLines = new java.util.ArrayList<>();
-        BotTitle title = bot.getTitle();
-        if (title != null && title.isGatherer()) {
-            Location from = null;
-            NpcHandle body = bodyOf(bot);
-            if (body != null && body.isValid()) {
-                from = body.getLocation();
+        Location from = null;
+        NpcHandle body = bodyOf(bot);
+        if (body != null && body.isValid()) {
+            from = body.getLocation();
+        }
+        if (from == null) {
+            from = bot.getHome();
+        }
+        if (from == null) {
+            Player owner = Bukkit.getPlayer(bot.getOwnerId());
+            if (owner != null) {
+                from = owner.getLocation();
             }
-            if (from == null) {
-                from = bot.getHome();
-            }
-            var plan = scavengeSkill.planOrder(bot, order, from);
-            botLines.addAll(plan.messages);
-            if (plan.startWork && title == BotTitle.MINER) {
-                String lower = order.toLowerCase(java.util.Locale.ROOT);
-                if (lower.contains("recipe") || lower.contains("craft") || lower.contains("how")
-                        || lower.contains("tool") || lower.contains("pick") || lower.contains("anvil")
-                        || lower.contains("repair")) {
-                    for (String line : scavengeSkill.minerTools().recipeHelpLines()) {
-                        botLines.add(org.bukkit.ChatColor.GRAY + "  " + line);
-                    }
-                } else {
-                    botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.GRAY
-                            + ": I'll use the right pickaxe tier for the job, craft a table if needed, "
-                            + "and prefer anvil repair over crafting new tools when picks wear out.");
-                }
-            }
-            if (plan.startWork) {
-                bot.setCurrentOrder(order);
-                bot.setStatus(BotStatus.BUSY);
-            }
-        } else if (title != null && title.isCombat()) {
+        }
+
+        java.util.List<String> botLines = new java.util.ArrayList<>(skills.accept(bot, order, from));
+        if (botLines.isEmpty() && bot.getStatus() != BotStatus.BUSY) {
+            // No skill handled it — still mark busy so status reflects the order
             bot.setCurrentOrder(order);
             bot.setStatus(BotStatus.BUSY);
-            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.WHITE
-                    + ": Guarding — I'll fight hostiles near you/home until stopped.");
-        } else if (title != null && title.isHunter()) {
-            bot.setCurrentOrder(order);
-            bot.setStatus(BotStatus.BUSY);
-            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.WHITE
-                    + ": Hunting nearby animals for food. I'll fill my bag and deposit.");
-        } else if (title != null && title.isFarmer()) {
-            bot.setCurrentOrder(order);
-            bot.setStatus(BotStatus.BUSY);
-            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.WHITE
-                    + ": Working the fields — harvest mature crops and replant.");
-        } else if (title == BotTitle.BUILDER) {
-            Location from = null;
-            NpcHandle body = bodyOf(bot);
-            if (body != null && body.isValid()) {
-                from = body.getLocation();
-            }
-            if (from == null) {
-                from = bot.getHome();
-            }
-            if (from == null) {
-                Player owner = Bukkit.getPlayer(bot.getOwnerId());
-                if (owner != null) {
-                    from = owner.getLocation();
-                }
-            }
-            botLines.addAll(builderSkill.startJob(bot, order, from));
-        } else {
-            bot.setCurrentOrder(order);
-            bot.setStatus(BotStatus.BUSY);
+            botLines.add(org.bukkit.ChatColor.GOLD + bot.getName() + org.bukkit.ChatColor.GRAY
+                    + ": Order noted (" + (bot.getTitle() == null ? "?" : bot.getTitle().display()) + ").");
         }
         save();
         return botLines;
     }
 
+    /**
+     * Post a job on the crew board (idle matching bots will claim on tick).
+     */
+    public CrewJob postJob(Player owner, BotTitle preferredTitle, String description, int priority) {
+        return jobBoard.post(owner.getUniqueId(), null, preferredTitle, description, priority);
+    }
+
+    public CrewJob postJobFromBot(CrewBot from, BotTitle preferredTitle, String description, int priority) {
+        CrewJob job = jobBoard.post(from.getOwnerId(), from.getId(), preferredTitle, description, priority);
+        learning.observe(from, "job_post", description, true,
+                preferredTitle == null ? "any" : preferredTitle.name());
+        return job;
+    }
+
     public void stop(CrewBot bot) {
         bot.setCurrentOrder(null);
         bot.setStatus(BotStatus.STOPPED);
-        builderSkill.clear(bot);
+        skills.stop(bot);
+        jobBoard.releaseBot(bot.getId());
         bot.remember("Stopped");
         learning.observe(bot, "stop", "Stopped by owner", true, null);
         save();
@@ -627,7 +728,11 @@ public class CrewManager {
                 .build();
         llm.generateResponseAsync(system, playerMessage, ctx).thenAccept(reply ->
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    String line = ChatColor.AQUA + "[" + bot.getName() + "] " + ChatColor.WHITE + reply;
+                    NpcHandle body = npcService.get(bot.getId());
+                    if (body != null && replyTo instanceof Player speaker) {
+                        body.lookAt(speaker.getEyeLocation());
+                    }
+                    String line = ChatColor.WHITE + "<" + bot.getName() + "> " + reply;
                     Bukkit.broadcastMessage(line);
                     bot.remember("Player: " + playerMessage);
                     bot.remember("Me: " + reply);

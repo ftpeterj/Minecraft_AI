@@ -4,6 +4,9 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -21,6 +24,8 @@ public final class CitizensHandle implements NpcHandle {
     private final Integer id;
     private final JavaPlugin plugin;
     private String displayPlate;
+    private Location lastWalkGoal;
+    private long lastWalkIssuedMs;
     private static final Logger LOG = Bukkit.getLogger();
 
     private CitizensHandle(Object npc, Integer id, JavaPlugin plugin) {
@@ -65,21 +70,24 @@ public final class CitizensHandle implements NpcHandle {
             CitizensHandle handle = new CitizensHandle(npc, id, plugin);
             handle.displayPlate = displayPlate;
 
-            // Hologram line for [Title] without touching the skin name
+            showInTabList(npc, regName);
             applyHologram(npc, regName, displayPlate);
-
-            // Skin: copy online player / Mojang textures (not fragile setSkinName alone)
             SkinApplier.apply(npc, skin, plugin);
 
-            // Re-assert plain name after skin (some skin paths rename)
-            Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                try {
-                    setName.invoke(npc, regName);
-                    applyHologram(npc, regName, displayPlate);
-                    SkinApplier.apply(npc, skin, plugin);
-                } catch (Throwable ignored) {
+            // Re-assert plain name + skin after the entity is fully spawned (Paper 26)
+            if (plugin != null) {
+                for (long delay : new long[]{15L, 40L, 80L}) {
+                    Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                        try {
+                            setName.invoke(npc, regName);
+                            applyHologram(npc, regName, displayPlate);
+                            showInTabList(npc, regName);
+                            SkinApplier.apply(npc, skin, plugin);
+                        } catch (Throwable ignored) {
+                        }
+                    }, delay);
                 }
-            }, 15L);
+            }
 
             return handle;
         } catch (Throwable t) {
@@ -172,6 +180,52 @@ public final class CitizensHandle implements NpcHandle {
         try {
             Method m = target.getClass().getMethod(method, types);
             m.invoke(target, args);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Keep PLAYER NPCs on the tab list like a real teammate. */
+    private static void showInTabList(Object npc, String listName) {
+        try {
+            Object data = npc.getClass().getMethod("data").invoke(npc);
+            setNpcData(data, "remove-from-playerlist", false);
+            setNpcData(data, "player-list", true);
+            try {
+                Class<?> meta = Class.forName("net.citizensnpcs.api.npc.NPC$Metadata");
+                for (Object constant : meta.getEnumConstants()) {
+                    String n = String.valueOf(constant);
+                    if (n.contains("REMOVE_FROM_PLAYERLIST") || n.contains("PLAYERLIST")) {
+                        boolean hide = n.contains("REMOVE");
+                        try {
+                            data.getClass().getMethod("setPersistent", meta, Object.class)
+                                    .invoke(data, constant, hide ? Boolean.FALSE : Boolean.TRUE);
+                        } catch (NoSuchMethodException e) {
+                            data.getClass().getMethod("set", meta, Object.class)
+                                    .invoke(data, constant, hide ? Boolean.FALSE : Boolean.TRUE);
+                        }
+                    }
+                }
+            } catch (ClassNotFoundException ignored) {
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Entity entity = (Entity) npc.getClass().getMethod("getEntity").invoke(npc);
+            if (entity instanceof Player p) {
+                p.setPlayerListName(listName);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void setNpcData(Object data, String key, Object value) {
+        try {
+            data.getClass().getMethod("setPersistent", String.class, Object.class).invoke(data, key, value);
+            return;
+        } catch (Throwable ignored) {
+        }
+        try {
+            data.getClass().getMethod("set", String.class, Object.class).invoke(data, key, value);
         } catch (Throwable ignored) {
         }
     }
@@ -366,6 +420,133 @@ public final class CitizensHandle implements NpcHandle {
             Class<?> npcIface = Class.forName("net.citizensnpcs.api.npc.NPC");
             registry.getClass().getMethod("deregister", npcIface).invoke(registry, npc);
         } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    public boolean walkTo(Location target, double speed) {
+        if (target == null || !isValid()) {
+            return false;
+        }
+        Location dest = NpcLocations.findDryStandNear(target, 3);
+        if (dest == null) {
+            dest = target.clone();
+            dest.setX(dest.getBlockX() + 0.5);
+            dest.setZ(dest.getBlockZ() + 0.5);
+        }
+        long now = System.currentTimeMillis();
+        boolean sameGoal = lastWalkGoal != null
+                && lastWalkGoal.getWorld() != null
+                && lastWalkGoal.getWorld().equals(dest.getWorld())
+                && lastWalkGoal.distanceSquared(dest) < 2.25;
+        if (sameGoal && isWalking() && (now - lastWalkIssuedMs) < 4000L) {
+            return true;
+        }
+        float spd = (float) Math.max(0.6, Math.min(speed <= 0 ? 1.0 : speed, 1.35));
+        Location from = getLocation();
+        if (from != null && from.getWorld() != null && dest.getWorld() != null
+                && from.getWorld().equals(dest.getWorld())
+                && from.distanceSquared(dest) > 16 * 16) {
+            spd = Math.min(spd * 1.18f, 1.42f);
+        }
+        try {
+            Object nav = npc.getClass().getMethod("getNavigator").invoke(npc);
+            try {
+                Object params = nav.getClass().getMethod("getLocalParameters").invoke(nav);
+                applyNavigatorSpeed(params, spd);
+            } catch (Throwable ignored) {
+            }
+            nav.getClass().getMethod("setTarget", Location.class).invoke(nav, dest);
+            lastWalkGoal = dest.clone();
+            lastWalkIssuedMs = now;
+            return true;
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "[AIBots] Citizens navigator failed: " + t.getMessage());
+            return false;
+        }
+    }
+
+    private static void applyNavigatorSpeed(Object params, float spd) {
+        for (String name : new String[]{"speedModifier", "speed", "baseSpeed"}) {
+            try {
+                params.getClass().getMethod(name, float.class).invoke(params, spd);
+                return;
+            } catch (NoSuchMethodException ignored) {
+            } catch (Throwable ignored) {
+            }
+            try {
+                params.getClass().getMethod(name, double.class).invoke(params, (double) spd);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @Override
+    public void stopWalking() {
+        lastWalkGoal = null;
+        try {
+            Object nav = npc.getClass().getMethod("getNavigator").invoke(npc);
+            nav.getClass().getMethod("cancelNavigation").invoke(nav);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    public boolean isWalking() {
+        try {
+            Object nav = npc.getClass().getMethod("getNavigator").invoke(npc);
+            Object navigating = nav.getClass().getMethod("isNavigating").invoke(nav);
+            return Boolean.TRUE.equals(navigating);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    @Override
+    public void equipMainHand(ItemStack item) {
+        Entity entity = getEntity();
+        if (entity instanceof LivingEntity living && item != null) {
+            try {
+                var eq = living.getEquipment();
+                if (eq != null) {
+                    eq.setItemInMainHand(item);
+                    eq.setItemInMainHandDropChance(0f);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @Override
+    public void lookAt(Location loc) {
+        if (loc == null) {
+            return;
+        }
+        Entity entity = getEntity();
+        if (entity == null) {
+            return;
+        }
+        if (entity instanceof org.bukkit.entity.Mob mob) {
+            try {
+                mob.lookAt(loc);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        Location here = entity.getLocation();
+        here.setDirection(loc.clone().toVector().subtract(here.toVector()));
+        entity.teleport(here);
+    }
+
+    @Override
+    public void swingMainHand() {
+        Entity entity = getEntity();
+        if (entity instanceof LivingEntity living) {
+            try {
+                living.swingMainHand();
+            } catch (Throwable ignored) {
+            }
         }
     }
 

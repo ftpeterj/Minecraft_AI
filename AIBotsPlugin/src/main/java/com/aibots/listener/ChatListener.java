@@ -2,6 +2,7 @@ package com.aibots.listener;
 
 import com.aibots.crew.CrewBot;
 import com.aibots.crew.CrewManager;
+import com.aibots.npc.NpcHandle;
 import com.aibots.skill.CombatSkill;
 import com.aibots.skill.FarmerSkill;
 import com.aibots.skill.HunterSkill;
@@ -58,6 +59,10 @@ public class ChatListener implements Listener {
         final String order = msg;
         Bukkit.getScheduler().runTask(plugin, () -> {
             Player player = event.getPlayer();
+            NpcHandle body = crew.getNpcService().get(bot.getId());
+            if (body != null) {
+                body.lookAt(player.getEyeLocation());
+            }
 
             // Storage Q&A before gather/LLM
             if (answerStorageQuestion(player, bot, order)) {

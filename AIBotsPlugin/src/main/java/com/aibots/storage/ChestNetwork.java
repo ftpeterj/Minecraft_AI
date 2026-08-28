@@ -121,20 +121,246 @@ public class ChestNetwork {
     }
 
     public void registerChest(Location loc) {
+        if (registerChestQuiet(loc)) {
+            save();
+        }
+    }
+
+    /** @return true if newly added */
+    private boolean registerChestQuiet(Location loc) {
         if (loc == null) {
-            return;
+            return false;
         }
         Location blockLoc = loc.getBlock().getLocation();
         for (Location existing : chests) {
             if (sameBlock(existing, blockLoc)) {
-                return;
+                return false;
             }
         }
         chests.add(blockLoc);
         if (hub == null) {
             hub = blockLoc.clone();
         }
+        return true;
+    }
+
+    /** True if this location is already in the network. */
+    public boolean isRegistered(Location loc) {
+        if (loc == null) {
+            return false;
+        }
+        Location blockLoc = loc.getBlock().getLocation();
+        for (Location existing : chests) {
+            if (sameBlock(existing, blockLoc)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Register every storage container inside the axis-aligned box defined by two corners
+     * (same geometry as Minecraft {@code /fill x1 y1 z1 x2 y2 z2}).
+     * <p>
+     * Loads every chunk in the box first so unloaded chests are still found.
+     * Detects singles, double-chest halves, barrels, and shulkers.
+     * Does not place or destroy blocks — only links existing containers.
+     */
+    public RegionResult registerRegion(Location cornerA, Location cornerB) {
+        RegionResult result = new RegionResult();
+        if (cornerA == null || cornerB == null
+                || cornerA.getWorld() == null || cornerB.getWorld() == null
+                || !cornerA.getWorld().equals(cornerB.getWorld())) {
+            result.error = "Both corners must be in the same world.";
+            return result;
+        }
+        World world = cornerA.getWorld();
+        int x1 = Math.min(cornerA.getBlockX(), cornerB.getBlockX());
+        int y1 = Math.min(cornerA.getBlockY(), cornerB.getBlockY());
+        int z1 = Math.min(cornerA.getBlockZ(), cornerB.getBlockZ());
+        int x2 = Math.max(cornerA.getBlockX(), cornerB.getBlockX());
+        int y2 = Math.max(cornerA.getBlockY(), cornerB.getBlockY());
+        int z2 = Math.max(cornerA.getBlockZ(), cornerB.getBlockZ());
+
+        // Thin / flat selection (common with pos1/pos2 on the floor) misses wall chests.
+        // Auto-expand height so a "room" scan still works.
+        int padBelow = plugin.getConfig().getInt("storage.register-y-pad-below", 1);
+        int padAbove = plugin.getConfig().getInt("storage.register-y-pad-above", 6);
+        int minThickness = plugin.getConfig().getInt("storage.register-min-y-thickness", 3);
+        if ((y2 - y1 + 1) < minThickness) {
+            result.yPadded = true;
+            y1 -= Math.max(0, padBelow);
+            y2 += Math.max(0, padAbove);
+        }
+
+        int minY = world.getMinHeight();
+        int maxY = world.getMaxHeight() - 1;
+        y1 = Math.max(minY, y1);
+        y2 = Math.min(maxY, y2);
+
+        result.x1 = x1;
+        result.y1 = y1;
+        result.z1 = z1;
+        result.x2 = x2;
+        result.y2 = y2;
+        result.z2 = z2;
+        result.dx = x2 - x1 + 1;
+        result.dy = y2 - y1 + 1;
+        result.dz = z2 - z1 + 1;
+
+        long volume = (long) result.dx * result.dy * result.dz;
+        int maxVolume = plugin.getConfig().getInt("storage.register-max-volume", 200_000);
+        result.volume = volume;
+        if (volume > maxVolume) {
+            result.error = "Region too large (" + volume + " blocks, "
+                    + result.dx + "×" + result.dy + "×" + result.dz + "). Max "
+                    + maxVolume + " (config storage.register-max-volume).";
+            return result;
+        }
+
+        // /fill-style: ensure every chunk in the box is loaded before reading blocks
+        int cx1 = x1 >> 4;
+        int cz1 = z1 >> 4;
+        int cx2 = x2 >> 4;
+        int cz2 = z2 >> 4;
+        int chunksLoaded = 0;
+        for (int cx = cx1; cx <= cx2; cx++) {
+            for (int cz = cz1; cz <= cz2; cz++) {
+                // Force-load so unloaded chest blocks are not read as air
+                world.getChunkAt(cx, cz).load(true);
+                chunksLoaded++;
+            }
+        }
+        result.chunksLoaded = chunksLoaded;
+
+        int before = chests.size();
+        int singles = 0;
+        int doubleHalves = 0;
+        int barrels = 0;
+        int shulkers = 0;
+
+        for (int x = x1; x <= x2; x++) {
+            for (int y = y1; y <= y2; y++) {
+                for (int z = z1; z <= z2; z++) {
+                    Block block = world.getBlockAt(x, y, z);
+                    Material type = block.getType();
+                    if (!isStorageContainer(type)) {
+                        continue;
+                    }
+                    result.found++;
+                    if (type == Material.BARREL) {
+                        barrels++;
+                    } else if (type.name().endsWith("SHULKER_BOX")) {
+                        shulkers++;
+                    } else if (type == Material.CHEST || type == Material.TRAPPED_CHEST) {
+                        if (isDoubleChestHalf(block)) {
+                            doubleHalves++;
+                        } else {
+                            singles++;
+                        }
+                    }
+
+                    if (isRegistered(block.getLocation())) {
+                        result.already++;
+                        continue;
+                    }
+                    if (registerChestQuiet(block.getLocation())) {
+                        result.registered++;
+                    }
+                }
+            }
+        }
+        result.singles = singles;
+        result.doubleHalves = doubleHalves;
+        result.barrels = barrels;
+        result.shulkers = shulkers;
+        // unique double chests ≈ halves/2 (both halves usually in volume)
+        result.doubleChests = (doubleHalves + 1) / 2;
+
+        // Hub = center of region (overwrite so deposits prefer this room)
+        if (result.registered > 0 || result.already > 0) {
+            hub = new Location(world, (x1 + x2) / 2.0, (y1 + y2) / 2.0, (z1 + z2) / 2.0)
+                    .getBlock().getLocation();
+            save();
+        }
+        result.networkSize = chests.size();
+        result.added = chests.size() - before;
+        result.uniqueInventories = uniqueInventories().size();
+        result.freeSlots = freeSlots();
+
+        plugin.getLogger().info("[AIBots] registerRegion /fill-box "
+                + x1 + "," + y1 + "," + z1 + " → " + x2 + "," + y2 + "," + z2
+                + " vol=" + result.volume
+                + " found=" + result.found
+                + " (single=" + singles + " doubleHalves=" + doubleHalves
+                + " barrel=" + barrels + " shulker=" + shulkers + ")"
+                + " new=" + result.registered + " already=" + result.already
+                + " invs=" + result.uniqueInventories
+                + " network=" + result.networkSize);
+        return result;
+    }
+
+    private static boolean isDoubleChestHalf(Block block) {
+        if (block == null) {
+            return false;
+        }
+        if (!(block.getBlockData() instanceof Chest chest)) {
+            return false;
+        }
+        return chest.getType() == Chest.Type.LEFT || chest.getType() == Chest.Type.RIGHT;
+    }
+
+    /** Drop all registrations (does not break blocks in the world). */
+    public int clearRegistrations() {
+        int n = chests.size();
+        chests.clear();
         save();
+        return n;
+    }
+
+    public static boolean isStorageContainer(Material type) {
+        if (type == null || type.isAir()) {
+            return false;
+        }
+        if (type == Material.CHEST || type == Material.TRAPPED_CHEST || type == Material.BARREL) {
+            return true;
+        }
+        String n = type.name();
+        return n.endsWith("SHULKER_BOX");
+    }
+
+    public static final class RegionResult {
+        public int found;
+        public int registered;
+        public int already;
+        public int added;
+        public int networkSize;
+        public int uniqueInventories;
+        public int freeSlots;
+        public long volume;
+        public int x1, y1, z1, x2, y2, z2;
+        public int dx, dy, dz;
+        public int chunksLoaded;
+        public int singles;
+        public int doubleHalves;
+        public int doubleChests;
+        public int barrels;
+        public int shulkers;
+        /** True when Y was auto-expanded because the box was too flat. */
+        public boolean yPadded;
+        public String error;
+
+        public boolean ok() {
+            return error == null || error.isBlank();
+        }
+
+        public String sizeLabel() {
+            return dx + "×" + dy + "×" + dz;
+        }
+
+        public String cornerLabel() {
+            return x1 + " " + y1 + " " + z1 + "  →  " + x2 + " " + y2 + " " + z2;
+        }
     }
 
     /** Ensure at least one chest exists near home; place if needed. */
@@ -147,6 +373,16 @@ public class ChestNetwork {
         if (home == null || home.getWorld() == null) {
             return null;
         }
+        // If a container is already next to home, register it — never wipe/replace
+        Location existing = findNearbyContainer(home, 4);
+        if (existing != null) {
+            registerChest(existing);
+            // Register the other half of a double chest if present
+            registerAdjacentChestHalves(existing.getBlock());
+            plugin.getLogger().info("[AIBots] Linked existing chest at "
+                    + existing.getBlockX() + "," + existing.getBlockY() + "," + existing.getBlockZ());
+            return existing;
+        }
         Location place = findPlaceSpot(home);
         if (place == null) {
             // Same floor as home — never highest-block (rooftop / outside ledge)
@@ -158,6 +394,12 @@ public class ChestNetwork {
                         + home.getBlockX() + "," + home.getBlockY() + "," + home.getBlockZ());
                 return null;
             }
+        }
+        // Never place over an existing container
+        if (isStorageContainer(place.getBlock().getType())) {
+            registerChest(place);
+            registerAdjacentChestHalves(place.getBlock());
+            return place.getBlock().getLocation();
         }
         if (preferDouble) {
             for (int[] o : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
@@ -179,6 +421,64 @@ public class ChestNetwork {
         plugin.getLogger().info("[AIBots] Placed chest at "
                 + place.getBlockX() + "," + place.getBlockY() + "," + place.getBlockZ());
         return place.getBlock().getLocation();
+    }
+
+    private Location findNearbyContainer(Location home, int radius) {
+        if (home == null || home.getWorld() == null) {
+            return null;
+        }
+        World world = home.getWorld();
+        int ox = home.getBlockX();
+        int oy = home.getBlockY();
+        int oz = home.getBlockZ();
+        Location best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -2; y <= 2; y++) {
+                for (int z = -radius; z <= radius; z++) {
+                    Block b = world.getBlockAt(ox + x, oy + y, oz + z);
+                    if (!isStorageContainer(b.getType())) {
+                        continue;
+                    }
+                    double d = b.getLocation().distanceSquared(home);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = b.getLocation();
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    private void registerAdjacentChestHalves(Block block) {
+        if (block == null
+                || (block.getType() != Material.CHEST && block.getType() != Material.TRAPPED_CHEST)) {
+            return;
+        }
+        for (BlockFace face : new BlockFace[]{BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+            Block n = block.getRelative(face);
+            if (n.getType() == Material.CHEST || n.getType() == Material.TRAPPED_CHEST) {
+                registerChest(n.getLocation());
+            }
+        }
+    }
+
+    public boolean isNearAny(Location loc, double blocks) {
+        if (loc == null || loc.getWorld() == null || blocks <= 0) {
+            return false;
+        }
+        pruneInvalid();
+        double r2 = blocks * blocks;
+        for (Location c : chests) {
+            if (c.getWorld() == null || !c.getWorld().equals(loc.getWorld())) {
+                continue;
+            }
+            if (c.distanceSquared(loc) <= r2) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Location nearestChest(Location from) {
@@ -769,12 +1069,18 @@ public class ChestNetwork {
             typeEastOrSouth = Chest.Type.RIGHT;  // south
         }
 
-        // Clear first so clients don't keep stale single-chest states
-        westOrNorth.setType(Material.AIR, false);
-        eastOrSouth.setType(Material.AIR, false);
-
-        westOrNorth.setType(Material.CHEST, false);
-        eastOrSouth.setType(Material.CHEST, false);
+        // NEVER air-wipe if either half already holds items (destroys player loot)
+        boolean protect = containerHasItems(westOrNorth) || containerHasItems(eastOrSouth);
+        if (!protect) {
+            westOrNorth.setType(Material.AIR, false);
+            eastOrSouth.setType(Material.AIR, false);
+            westOrNorth.setType(Material.CHEST, false);
+            eastOrSouth.setType(Material.CHEST, false);
+        } else if (westOrNorth.getType() != Material.CHEST) {
+            westOrNorth.setType(Material.CHEST, false);
+        } else if (eastOrSouth.getType() != Material.CHEST) {
+            eastOrSouth.setType(Material.CHEST, false);
+        }
 
         Chest dataW = (Chest) Bukkit.createBlockData(Material.CHEST);
         Chest dataE = (Chest) Bukkit.createBlockData(Material.CHEST);
@@ -788,6 +1094,18 @@ public class ChestNetwork {
         // Physics/update so inventory links and clients refresh
         westOrNorth.getState().update(true, true);
         eastOrSouth.getState().update(true, true);
+    }
+
+    private static boolean containerHasItems(Block block) {
+        if (block == null || !(block.getState() instanceof Container c)) {
+            return false;
+        }
+        for (ItemStack s : c.getInventory().getContents()) {
+            if (s != null && !s.getType().isAir()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static void placeSingleChest(Block block, BlockFace facing) {
