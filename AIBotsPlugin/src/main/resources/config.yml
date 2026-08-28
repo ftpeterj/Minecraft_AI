@@ -66,8 +66,18 @@ crew:
   max-bots-per-player: 6
   # Wipe bots.yml + world crew bodies on every plugin/server load (no ghosts after restart)
   clear-on-load: true
-  # "owner" = use summoner's Minecraft username skin (recommended)
-  default-skin: "owner"
+  # "pool" = distinct skin per bot from crew.skin-pool below (recommended — bots don't
+  #          all look like clones of the owner)
+  # "owner" = use summoner's Minecraft username skin for every bot
+  default-skin: "pool"
+  # Usernames drawn from when default-skin is "pool". Each new bot gets the first entry
+  # not already worn by one of your active crew (wraps to random once exhausted).
+  # Edit freely to your own favorite skins.
+  skin-pool:
+    - "Notch"
+    - "jeb_"
+    - "Dinnerbone"
+    - "xisumavoid"
   # player / citizens = human player model + skin (needs Citizens)
   # villager = native villager body (fallback if skins fail)
   # armorstand = player head + leather body
@@ -102,6 +112,17 @@ crew:
   job-board:
     max-jobs: 64
     claim-timeout-seconds: 300
+  # Cosmetic idle behavior: wander/look-at-player/emote for idle bots with no order,
+  # so they don't stand frozen. Never issues work; stays within wander-radius of home.
+  # Titles with auto-when-idle: true already move on their own and are skipped here.
+  idle-liveliness:
+    enabled: true
+    wander-radius: 5
+    wander-interval-seconds: 60
+    look-radius: 10
+    look-interval-seconds: 10
+    emote-interval-seconds: 120
+    emote-chance: 0.4
 
 learning:
   # If true, writes learning.yml on every observation (heavier I/O)

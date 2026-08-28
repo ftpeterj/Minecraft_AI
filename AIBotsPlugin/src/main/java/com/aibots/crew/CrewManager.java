@@ -5,6 +5,7 @@ import com.aibots.llm.LLMContext;
 import com.aibots.llm.LLMProvider;
 import com.aibots.llm.LMStudioClient;
 import com.aibots.llm.RolePrompts;
+import com.aibots.npc.IdleLiveliness;
 import com.aibots.npc.NpcHandle;
 import com.aibots.npc.NpcService;
 import com.aibots.skill.BuilderCrewSkill;
@@ -37,7 +38,10 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -55,6 +59,7 @@ public class CrewManager {
     private final CrewJobBoard jobBoard;
     private final CrewMessenger messenger;
     private final RadiusService radiusService;
+    private final IdleLiveliness idleLiveliness;
     private final Map<UUID, CrewBot> botsById = new ConcurrentHashMap<>();
     private final Map<String, UUID> nameIndex = new ConcurrentHashMap<>();
     private final File botsFile;
@@ -79,6 +84,7 @@ public class CrewManager {
         this.skills.register(new HunterCrewSkill(hunterSkill));
         this.skills.register(new FarmerCrewSkill(farmerSkill));
         this.skills.register(new BuilderCrewSkill(builderSkill));
+        this.idleLiveliness = new IdleLiveliness(plugin, npcService);
         this.jobBoard = new CrewJobBoard(plugin);
         this.messenger = new CrewMessenger(
                 plugin,
@@ -339,6 +345,7 @@ public class CrewManager {
 
     private void tick() {
         npcService.tickSyncLocations(botsById);
+        idleLiveliness.tick(botsById);
         tickCounter++;
         if (tickCounter % 30 == 0) {
             jobBoard.reclaimTimedOut();
@@ -451,6 +458,30 @@ public class CrewManager {
     /**
      * Summon at an explicit location (console / automation friendly).
      */
+    /**
+     * Pick a skin from {@code crew.skin-pool} not already worn by a currently active bot,
+     * so freshly summoned crew look distinct from each other and from the owner.
+     * Falls back to a random pool entry once the pool is exhausted, and to "Steve" if
+     * the pool is empty.
+     */
+    private String pickPoolSkin() {
+        List<String> pool = plugin.getConfig().getStringList("crew.skin-pool");
+        if (pool.isEmpty()) {
+            return "Steve";
+        }
+        Set<String> used = botsById.values().stream()
+                .map(CrewBot::getSkin)
+                .filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        for (String candidate : pool) {
+            if (!used.contains(candidate.toLowerCase(Locale.ROOT))) {
+                return candidate;
+            }
+        }
+        return pool.get(new Random().nextInt(pool.size()));
+    }
+
     public CrewBot summonAt(UUID ownerId, String ownerName, Location home, Location spawnAt,
                             String name, BotTitle title, String skinOrNull) {
         String clean = sanitizeName(name);
@@ -479,6 +510,8 @@ public class CrewManager {
                 || configuredDefault.equalsIgnoreCase("owner")
                 || configuredDefault.equalsIgnoreCase("self")) {
             skin = ownerName;
+        } else if (configuredDefault.equalsIgnoreCase("pool")) {
+            skin = pickPoolSkin();
         } else {
             skin = configuredDefault.trim();
         }
