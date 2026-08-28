@@ -43,7 +43,12 @@ public final class VillagerHandle implements NpcHandle {
             villager.setPersistent(true);
             villager.setSilent(false);
             villager.setInvulnerable(true);
-            villager.setCollidable(true);
+            // All vanilla AI goals are stripped below (stripGoals), including whatever goal
+            // would normally step a mob out of another mob's way. Collidable + no goals =
+            // raw entity-separation physics shoving overlapping crew back and forth forever
+            // whenever two end up near the same spot (e.g. both idle near home). Match
+            // ArmorStandHandle and stay non-collidable so bots don't bounce off each other.
+            villager.setCollidable(false);
             try {
                 villager.setRecipes(java.util.Collections.emptyList());
             } catch (Throwable ignored) {
