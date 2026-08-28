@@ -14,6 +14,14 @@ Thumbs.db
 # Local secrets / server data
 **/config-local.yml
 **/.env
+**/.env.*
 **/bots.yml
 **/learning.yml
 **/storage.yml
+ops.local.yml
+**/ops.local.yml
+CLAUDE.local.md
+
+# Not part of Minecraft_AI — never commit
+pihole/
+cryptobot/

@@ -1,0 +1,31 @@
+# Copy to ops.local.yml (gitignored) and fill in.
+# Never commit ops.local.yml — it holds the RCON password.
+
+ssh:
+  host: minecraft.local
+  user: xxadmin
+  identity: ~/.ssh/claude_tool
+  # After ~/.ssh/config Host minecraft is set: `ssh minecraft`
+
+rcon:
+  # mcrcon runs ON the Minecraft box, talking to localhost
+  host: 127.0.0.1
+  port: 25577
+  password: "SET-ME"
+
+creative:
+  root: /home/minecraft/multicraft/servers/Creative
+  plugins: /home/minecraft/multicraft/servers/Creative/plugins
+  aibots_data: /home/minecraft/multicraft/servers/Creative/plugins/AIBots
+  jar_glob: AIBots-*-SNAPSHOT.jar
+  paper_jar: paper-26.1.2-69.jar
+
+ollama:
+  base_url: http://dadsbox.local:11434
+  model: qwen2.5:14b
+  binary: "%LOCALAPPDATA%/Programs/Ollama/ollama.exe"
+
+github:
+  repo: ftpeterj/Minecraft_AI
+  clone: C:\Projects
+  auth: gh keyring (HTTPS). Do not use git@github.com from an agent.

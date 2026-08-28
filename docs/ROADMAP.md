@@ -26,18 +26,22 @@ A cooperative Minecraft session on a **personal offline server**: you are the le
 - Player bodies, chat, tab list, tools; movement, loot, crafting, building, combat.
 - Skill chaining and task execution via job board. They help; they don't hijack the session.
 
-## Status (AIBots 1.5.x)
+## Status (AIBots 1.6.5)
 
 Shipped in monorepo under `AIBotsPlugin/`:
 - Multi-role crew: scavenger, miner, woodsman, hunter, farmer, warrior, protector, builder
-- Villager avatars + Paper pathfinding, loot bag UI, chest network, stack size up to 99
+- **Player avatars** (Citizens PLAYER + walkTo, tab list, tools) with villager fallback
 - Learning: teach / share / episodes (`learning.yml`)
-- Multi-LLM: `LLMProvider`, `OllamaProvider`, `OpenAiCompatibleProvider`, `LLMRouter` + config
+- Multi-LLM: Ollama primary (`qwen2.5:14b` on DadsBox), LM Studio fallback, optional cloud keys
 - Inter-bot messaging: `/crew msg`, material requests from builder
 - Builder primitives: wall / platform / pillar / box
 - **Crew skill interface + job board** (delegation queue)
 - **Storage room register** (`/crew storage register` / pos1–pos2, like `/fill`)
-- **Force deposit** (`/crew deposit <name>`) + inventory list (`/crew inv`)
+- **Deposit home** at 64-item armful (`deposit-threshold: 64`) + `/crew deposit` / `/crew inv`
+- **Storage keepout** (default 8) — do not mine next to home/chests
+- Unstick from water / inside blocks
+- Nearby tree heal: `/crew healtrees <radius>` (do **not** run world-wide)
+- Co-op prompts: human stays in charge
 
 ### Storage registration note (playtested)
 When using **pos1 / pos2**, corners must span **height** as well as X/Z.  

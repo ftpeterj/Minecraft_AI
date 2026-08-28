@@ -2,6 +2,8 @@
 
 Personal offline Paper server + AIBots multi-role crew. No extra Minecraft accounts required.
 
+Agent handoff (Claude / Grok): see **`CLAUDE.md`**. Local RCON/SSH: **`ops.local.yml`** (gitignored; start from `ops.local.yml.example`).
+
 ## 1. Server setup (offline mode)
 
 1. Edit `server.properties`:
@@ -37,10 +39,11 @@ plugins/AIBots/
 
 ### Local (primary) — Ollama
 1. Install [Ollama](https://ollama.com/) on the box with the GPU (currently `dadsbox`).
-2. Pull a chat model, for example:
+2. Pull a chat model. Current crew model:
    ```
-   ollama pull llama3.2
+   ollama pull qwen2.5:14b
    ```
+   `llama3.2` is a lighter spare.
 3. If the Minecraft server is on another machine, Ollama must listen on the LAN (it binds localhost by default):
    - Windows: set user env var `OLLAMA_HOST=0.0.0.0:11434`, then restart Ollama.
    - Linux: `systemctl edit ollama` → `Environment=OLLAMA_HOST=0.0.0.0:11434`, then restart.
