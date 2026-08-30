@@ -3,6 +3,8 @@ package com.aibots.npc;
 import com.aibots.crew.BotTitle;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Villager;
@@ -234,6 +236,16 @@ public final class VillagerHandle implements NpcHandle {
         return velocityStep(dest);
     }
 
+    /**
+     * Last-resort nudge when the real pathfinder ({@code moveTo}) couldn't find a
+     * route at all. This is a straight-line push, not pathfinding — if it doesn't
+     * check what's directly ahead first, it just shoves the bot into whatever
+     * blocked the real pathfinder in the first place (a wall, a doorway it
+     * couldn't route through), over and over — the "bouncing off a wall" /
+     * "walking in circles" bug. Returning false here (nothing passable ahead) lets
+     * the caller's normal stuck-detection give up on this target instead of
+     * spinning forever.
+     */
     private boolean velocityStep(Location target) {
         Location from = villager.getLocation();
         double dx = target.getX() - from.getX();
@@ -242,8 +254,21 @@ public final class VillagerHandle implements NpcHandle {
         if (dist < 0.15) {
             return false;
         }
+        double ux = dx / dist;
+        double uz = dz / dist;
+        World world = from.getWorld();
+        if (world != null) {
+            int ax = from.getBlockX() + (int) Math.round(ux);
+            int az = from.getBlockZ() + (int) Math.round(uz);
+            int ay = from.getBlockY();
+            Material feet = world.getBlockAt(ax, ay, az).getType();
+            Material head = world.getBlockAt(ax, ay + 1, az).getType();
+            if (!NpcLocations.isPassable(feet) || !NpcLocations.isPassable(head)) {
+                return false;
+            }
+        }
         double scale = Math.min(0.18, dist * 0.35);
-        Vector v = new Vector(dx / dist * scale, Math.min(villager.getVelocity().getY(), 0), dz / dist * scale);
+        Vector v = new Vector(ux * scale, Math.min(villager.getVelocity().getY(), 0), uz * scale);
         if (!villager.isOnGround() && v.getY() > -0.15) {
             v.setY(-0.1);
         }
