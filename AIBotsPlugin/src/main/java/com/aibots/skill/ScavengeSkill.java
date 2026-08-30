@@ -346,8 +346,13 @@ public class ScavengeSkill {
         // Within ~2.5 blocks of approach tile OR close enough to hit the resource
         double hitDistSq = loc.distanceSquared(target.getLocation().add(0.5, 0.5, 0.5));
         if (distSq > 6.25 && hitDistSq > 9.0) {
-            // Stuck: nudge then abandon
-            if (nav.stuckTicks >= 3) {
+            // Stuck: nudge then abandon — but never teleport while the real
+            // pathfinder is actively following a path. A legitimate door transition
+            // (approach, open, step through, close behind) barely moves position for
+            // a tick or two; teleporting mid-transition cancels the in-progress path
+            // and the door's open state along with it, producing an endless
+            // open/close loop right at the doorway instead of ever passing through.
+            if (nav.stuckTicks >= 3 && !body.isWalking()) {
                 nudgeToward(body, approach);
             }
             if (nav.stuckTicks >= 8) {
