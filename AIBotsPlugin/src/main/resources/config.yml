@@ -154,9 +154,11 @@ titles:
     fish-radius: 20
     # Items in bag before walking home to stash (0 = 64, like a player armful). -1 = wait until every slot is used.
     deposit-threshold: 64
-    # Auto-gather nearest useful blocks even without a spoken order (after home is set).
-    # Farming/fishing only trigger on an explicit order, same as before this merge.
-    auto-when-idle: true
+    # Wait for an explicit order before working (a Gatherer starting to dig near a
+    # freshly-summoned spot — often right next to a build — reads as reckless).
+    # Defender keeps auto-when-idle: true below since being ready to defend on
+    # summon is the point.
+    auto-when-idle: false
     valued-materials: []
   # Builds, hunts animals, and defends an area — patrols/engages automatically when idle.
   defender:
