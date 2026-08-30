@@ -94,7 +94,7 @@ crew:
   # Default work/search radius (blocks). Was effectively capped at 48 before 1.5.7.
   # Change with /crew radius default <n>  or session-only /crew radius <n>
   # Don't mine/harvest this close to home or registered chests
-  storage-keepout: 8
+  storage-keepout: 40
   work-radius: 48
   survey-radius: 48
   far-resource-blocks: 28
