@@ -22,6 +22,7 @@ import com.aibots.skill.HunterSkill;
 import com.aibots.skill.ScavengeSkill;
 import com.aibots.skill.SkillRegistry;
 import com.aibots.storage.ChestNetwork;
+import com.aibots.storage.ProtectedZones;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -55,6 +56,7 @@ public class CrewManager {
     private volatile LLMProvider llm;
     private final LearningService learning;
     private final ChestNetwork chestNetwork;
+    private final ProtectedZones protectedZones;
     private final ScavengeSkill scavengeSkill;
     private final BuilderSkill builderSkill;
     private final SkillRegistry skills;
@@ -74,8 +76,9 @@ public class CrewManager {
         this.llm = llm;
         this.learning = new LearningService(plugin);
         this.chestNetwork = new ChestNetwork(plugin);
+        this.protectedZones = new ProtectedZones(plugin);
         this.radiusService = new RadiusService(plugin);
-        this.scavengeSkill = new ScavengeSkill(plugin, npcService, chestNetwork, learning, radiusService);
+        this.scavengeSkill = new ScavengeSkill(plugin, npcService, chestNetwork, learning, radiusService, protectedZones);
         CombatSkill combatSkill = new CombatSkill(plugin, npcService, learning);
         HunterSkill hunterSkill = new HunterSkill(plugin, npcService, chestNetwork, learning);
         FarmerSkill farmerSkill = new FarmerSkill(plugin, npcService, chestNetwork, learning);
@@ -122,6 +125,10 @@ public class CrewManager {
 
     public LearningService getLearning() {
         return learning;
+    }
+
+    public ProtectedZones getProtectedZones() {
+        return protectedZones;
     }
 
     public ChestNetwork getChestNetwork() {
@@ -189,6 +196,7 @@ public class CrewManager {
     public void start() {
         learning.load();
         chestNetwork.load();
+        protectedZones.load();
 
         boolean clearOnLoad = plugin.getConfig().getBoolean("crew.clear-on-load", true);
         if (clearOnLoad) {
@@ -347,6 +355,7 @@ public class CrewManager {
         }
         learning.save();
         chestNetwork.save();
+        protectedZones.save();
         npcService.shutdownPhysics();
         // LLM lifecycle owned by AIBotsPlugin (router); do not close here
     }

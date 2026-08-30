@@ -68,6 +68,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                 case "jobs", "job", "board" -> jobs(sender, args);
                 case "purge" -> purge(sender);
                 case "storage", "chests", "stock", "has" -> storage(sender, args);
+                case "protect" -> protect(sender, args);
                 case "deposit", "dump" -> deposit(sender, args);
                 case "give", "put" -> giveLoot(sender, args);
                 case "radius", "range", "workradius" -> radius(sender, args);
@@ -122,6 +123,8 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                 + "  Same box as /fill: every chest/double/barrel/shulker inside is linked");
         sender.sendMessage(ChatColor.GRAY
                 + "  Or: pos1 (look at corner) → pos2 (opposite corner) → register");
+        sender.sendMessage(ChatColor.YELLOW + "/" + label + " protect  " + ChatColor.GRAY
+                + "list | register | pos1 | pos2 | clear  (no-go zone — gatherers never touch it)");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " deposit <name>  "
                 + ChatColor.GRAY + "(force bag → network now)");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " radius [session|default|clear] [blocks]  "
@@ -895,6 +898,147 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    /**
+     * Explicit no-go zones for gatherers — same /fill-style pos1/pos2/register UX as
+     * {@code /crew storage}, but marks a box off-limits rather than scanning for chests.
+     * <pre>
+     * /crew protect pos1
+     * /crew protect pos2
+     * /crew protect register [label]
+     * /crew protect register &lt;x1&gt; &lt;y1&gt; &lt;z1&gt; &lt;x2&gt; &lt;y2&gt; &lt;z2&gt; [label]
+     * /crew protect list
+     * /crew protect clear [#]
+     * </pre>
+     */
+    private void protect(CommandSender sender, String[] args) {
+        var zones = crew.getProtectedZones();
+        String sub = args.length >= 2 ? args[1].toLowerCase(Locale.ROOT) : "list";
+
+        if (sub.equals("pos1") || sub.equals("pos2")) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(ChatColor.RED + "Players only (or use full coords).");
+                return;
+            }
+            Location loc = targetBlockCorner(player);
+            String key = "aibots.protect." + sub;
+            player.setMetadata(key, new org.bukkit.metadata.FixedMetadataValue(plugin, loc));
+            sender.sendMessage(ChatColor.GREEN + "Protect " + sub + " = "
+                    + ChatColor.YELLOW + loc.getBlockX() + " " + loc.getBlockY() + " " + loc.getBlockZ()
+                    + ChatColor.GRAY + "  (corner of the no-go box)");
+            if (sub.equals("pos1")) {
+                sender.sendMessage(ChatColor.GRAY + "Now look at the opposite corner and run "
+                        + ChatColor.AQUA + "/crew protect register");
+            }
+            return;
+        }
+
+        if (sub.equals("register")) {
+            Location a;
+            Location b;
+            String label = "";
+            if (args.length >= 8) {
+                try {
+                    int x1 = Integer.parseInt(args[2]);
+                    int y1 = Integer.parseInt(args[3]);
+                    int z1 = Integer.parseInt(args[4]);
+                    int x2 = Integer.parseInt(args[5]);
+                    int y2 = Integer.parseInt(args[6]);
+                    int z2 = Integer.parseInt(args[7]);
+                    org.bukkit.World world = sender instanceof Player p ? p.getWorld()
+                            : (Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
+                    if (world == null) {
+                        sender.sendMessage(ChatColor.RED + "No world available.");
+                        return;
+                    }
+                    a = new Location(world, x1, y1, z1);
+                    b = new Location(world, x2, y2, z2);
+                    if (args.length > 8) {
+                        label = String.join(" ", Arrays.copyOfRange(args, 8, args.length));
+                    }
+                } catch (NumberFormatException ex) {
+                    sender.sendMessage(ChatColor.RED + "Coords must be integers (same as /fill).");
+                    sender.sendMessage(ChatColor.GRAY
+                            + "Usage: /crew protect register <x1> <y1> <z1> <x2> <y2> <z2> [label]");
+                    return;
+                }
+            } else if (sender instanceof Player player) {
+                if (!player.hasMetadata("aibots.protect.pos1") || !player.hasMetadata("aibots.protect.pos2")) {
+                    sender.sendMessage(ChatColor.GOLD + "Mark a no-go zone like /fill:");
+                    sender.sendMessage(ChatColor.YELLOW + "  1. /crew protect pos1  "
+                            + ChatColor.GRAY + "look at one corner");
+                    sender.sendMessage(ChatColor.YELLOW + "  2. /crew protect pos2  "
+                            + ChatColor.GRAY + "look at the opposite corner");
+                    sender.sendMessage(ChatColor.YELLOW + "  3. /crew protect register [label]");
+                    sender.sendMessage(ChatColor.GRAY + "Or paste coords: /crew protect register "
+                            + "<x1> <y1> <z1> <x2> <y2> <z2> [label]");
+                    return;
+                }
+                Object v1 = player.getMetadata("aibots.protect.pos1").get(0).value();
+                Object v2 = player.getMetadata("aibots.protect.pos2").get(0).value();
+                if (!(v1 instanceof Location) || !(v2 instanceof Location)) {
+                    sender.sendMessage(ChatColor.RED + "Invalid pos1/pos2 — set them again.");
+                    return;
+                }
+                a = (Location) v1;
+                b = (Location) v2;
+                if (args.length > 2) {
+                    label = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
+                }
+            } else {
+                sender.sendMessage(ChatColor.GOLD + "Usage: /crew protect register <x1> <y1> <z1> <x2> <y2> <z2> [label]");
+                return;
+            }
+
+            var result = zones.register(a, b, label);
+            if (!result.ok()) {
+                sender.sendMessage(ChatColor.RED + result.error);
+                return;
+            }
+            sender.sendMessage(ChatColor.GREEN + "No-go zone registered "
+                    + ChatColor.AQUA + result.zone.sizeLabel()
+                    + ChatColor.GRAY + " = " + result.zone.volume() + " blocks"
+                    + (label.isBlank() ? "" : ChatColor.WHITE + " (" + label + ")"));
+            sender.sendMessage(ChatColor.GRAY + "Gatherers will never mine/harvest inside this box.");
+            return;
+        }
+
+        if (sub.equals("clear")) {
+            if (args.length >= 3) {
+                try {
+                    int idx = Integer.parseInt(args[2]);
+                    if (zones.remove(idx)) {
+                        sender.sendMessage(ChatColor.GREEN + "Removed no-go zone #" + idx + ".");
+                    } else {
+                        sender.sendMessage(ChatColor.RED + "No zone #" + idx + ". Use /crew protect list");
+                    }
+                } catch (NumberFormatException ex) {
+                    sender.sendMessage(ChatColor.RED + "Usage: /crew protect clear [#]");
+                }
+                return;
+            }
+            int n = zones.clear();
+            sender.sendMessage(ChatColor.GREEN + "Cleared " + n + " no-go zone(s).");
+            return;
+        }
+
+        // list (default)
+        var list = zones.list();
+        if (list.isEmpty()) {
+            sender.sendMessage(ChatColor.GRAY + "No no-go zones registered. "
+                    + "Use /crew protect pos1 → pos2 → register");
+            return;
+        }
+        sender.sendMessage(ChatColor.GOLD + "=== No-go zones (" + list.size() + ") ===");
+        for (int i = 0; i < list.size(); i++) {
+            var z = list.get(i);
+            sender.sendMessage(ChatColor.AQUA + " #" + i + ChatColor.WHITE + " " + z.sizeLabel()
+                    + ChatColor.GRAY + " @ " + z.x1 + "," + z.y1 + "," + z.z1
+                    + " → " + z.x2 + "," + z.y2 + "," + z.z2
+                    + (z.label.isBlank() ? "" : ChatColor.YELLOW + " (" + z.label + ")"));
+        }
+        sender.sendMessage(ChatColor.GRAY + "Remove: /crew protect clear <#>  |  Remove all: /crew protect clear");
+    }
+
     /** Block the player is looking at (range 64), else feet block — for /fill-style corners. */
     private static Location targetBlockCorner(Player player) {
         try {
@@ -1251,12 +1395,15 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                     "help", "summon", "dismiss", "list", "title", "skin",
                     "assign", "stop", "home", "here", "find", "say", "broadcast", "teach", "memory",
                     "share", "msg", "ask", "jobs", "info", "inv", "inventory", "bag", "loot",
-                    "deposit", "dump", "give", "put", "radius", "purge", "storage", "has", "stock", "reload", "llm",
-                    "healtrees"
+                    "deposit", "dump", "give", "put", "radius", "purge", "storage", "protect", "has", "stock",
+                    "reload", "llm", "healtrees"
             ));
         }
         if (args.length == 2 && List.of("healtrees", "healtree", "fixtrees").contains(args[0].toLowerCase(Locale.ROOT))) {
             return filter(args[1], List.of("world", "128", "256", "512", "cancel"));
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("protect")) {
+            return filter(args[1], List.of("pos1", "pos2", "register", "list", "clear"));
         }
         if (args.length == 2 && List.of("radius", "range", "workradius").contains(args[0].toLowerCase(Locale.ROOT))) {
             return filter(args[1], List.of("48", "80", "120", "200", "session", "default", "clear", "status"));

@@ -140,6 +140,8 @@ storage:
   register-min-y-thickness: 3
   register-y-pad-below: 1
   register-y-pad-above: 8
+  # Max blocks in a /crew protect register no-go zone
+  protect-max-volume: 200000
 
 titles:
   # Generalist resource role — mining, woodcutting, scavenging, farming, and fishing

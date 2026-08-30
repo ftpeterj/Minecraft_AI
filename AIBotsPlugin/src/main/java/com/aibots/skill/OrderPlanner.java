@@ -61,6 +61,9 @@ public final class OrderPlanner {
                 || lower.equals("yes") || lower.contains("proceed")
                 || lower.contains("any wood") || lower.contains("all wood") || lower.contains("all types")
                 || lower.contains("mixed") || lower.contains("whatever") || lower.contains("any type")
+                || lower.contains("anything") || lower.contains("you pick") || lower.contains("your pick")
+                || lower.contains("your call") || lower.contains("your choice") || lower.contains("surprise me")
+                || lower.contains("up to you")
                 || lower.matches(".*\\bany\\b.*") && (lower.contains("wood") || lower.contains("log"));
 
         // Strip force words for matching
@@ -228,6 +231,15 @@ public final class OrderPlanner {
      * Survey area: nearest of each material family matching category / alternatives.
      */
     public static Map<Material, SurveyHit> survey(Location origin, OrderFocus focus, int radius) {
+        return survey(origin, radius, focus::sameCategory);
+    }
+
+    /**
+     * Survey area with a caller-supplied matcher — used for a GENERIC (vague) order,
+     * where "same category" isn't a fixed family but whatever the title's generalist
+     * awareness ({@link GatherFocus#matches}) considers worth gathering.
+     */
+    public static Map<Material, SurveyHit> survey(Location origin, int radius, java.util.function.Predicate<Material> matcher) {
         Map<Material, SurveyHit> nearest = new LinkedHashMap<>();
         if (origin == null || origin.getWorld() == null) {
             return nearest;
@@ -258,7 +270,7 @@ public final class OrderPlanner {
                     }
                     Block b = world.getBlockAt(ox + x, by, oz + z);
                     Material t = b.getType();
-                    if (t.isAir() || !focus.sameCategory(t)) {
+                    if (t.isAir() || !matcher.test(t)) {
                         continue;
                     }
                     // Group deepslate iron with iron for display? keep separate but both show
@@ -282,6 +294,41 @@ public final class OrderPlanner {
         // (session is applied by ScavengeSkill; planOrder uses config + optional live effective)
         double warnDist = plugin.getConfig().getDouble("crew.far-resource-blocks",
                 Math.max(28, surveyR * 0.6));
+
+        // Vague order ("gather", "get to work", or blank) — survey broadly (whatever
+        // the title's generalist awareness cares about, not a fixed category) and
+        // report findings instead of silently picking. "anything"/"whatever"/etc. set
+        // force=true, which skips straight to auto-picking like before.
+        if (focus.category() == OrderFocus.Category.GENERIC) {
+            List<Material> valued = GatherFocus.materialsFor(plugin, bot.getTitle());
+            java.util.function.Predicate<Material> matcher =
+                    t -> GatherFocus.matches(bot.getTitle(), t, null, valued);
+            Map<Material, SurveyHit> genericHits = survey(origin, surveyR, matcher);
+            List<SurveyHit> genericSorted = new ArrayList<>(genericHits.values());
+            genericSorted.sort(Comparator.comparingDouble(h -> h.distance));
+
+            if (genericSorted.isEmpty()) {
+                msgs.add(ChatColor.GOLD + name + ChatColor.WHITE
+                        + ": I don't see anything worth gathering nearby yet. "
+                        + "Point me somewhere or give me a specific order.");
+                return new PlanResult(focus, false, msgs);
+            }
+
+            if (!focus.force()) {
+                msgs.add(ChatColor.GOLD + name + ChatColor.WHITE + ": I see "
+                        + summarize(genericSorted, 5) + " nearby — tell me what to gather "
+                        + "(" + ChatColor.AQUA + "/crew assign " + name + " get <item>"
+                        + ChatColor.WHITE + "), or say " + ChatColor.YELLOW + "\"anything\""
+                        + ChatColor.WHITE + " and I'll pick.");
+                return new PlanResult(focus, false, msgs);
+            }
+
+            SurveyHit pick = genericSorted.get(0);
+            msgs.add(ChatColor.GOLD + name + ChatColor.WHITE + ": You pick — going for "
+                    + OrderFocus.friendly(pick.material) + " (~" + Math.round(pick.distance) + " blocks).");
+            return new PlanResult(new OrderFocus(OrderFocus.Category.GENERIC, pick.material, true, focus.rawOrder(), true),
+                    true, msgs);
+        }
 
         Map<Material, SurveyHit> hits = survey(origin, focus, surveyR);
         List<SurveyHit> sorted = new ArrayList<>(hits.values());
@@ -396,6 +443,24 @@ public final class OrderPlanner {
         }
         msgs.add(ChatColor.DARK_GRAY + "  /crew stop " + name + " to cancel.");
         return new PlanResult(focus, true, msgs);
+    }
+
+    /** "iron ore (~12), oak (~20), sand (~30)" — nearest-distance list, not counts. */
+    private static String summarize(List<SurveyHit> sorted, int max) {
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (SurveyHit h : sorted) {
+            if (n >= max) {
+                sb.append(", …");
+                break;
+            }
+            if (n > 0) {
+                sb.append(", ");
+            }
+            sb.append(OrderFocus.friendly(h.material)).append(" (~").append(Math.round(h.distance)).append(")");
+            n++;
+        }
+        return sb.toString();
     }
 
     private static void appendChoices(List<String> msgs, CrewBot bot, List<SurveyHit> alts, int max) {

@@ -66,9 +66,12 @@ public final class GatherCrewSkill implements CrewSkill {
                         + "and prefer anvil repair over crafting new tools when picks wear out.");
             }
         }
-        // Always engage — planOrder applies focus; never leave scavenger IDLE after assign
-        bot.setCurrentOrder(order);
-        bot.setStatus(BotStatus.BUSY);
+        // A vague order (planOrder surveyed and asked instead of guessing) leaves the
+        // bot idle with no order recorded — don't override that back to BUSY here.
+        if (plan.startWork) {
+            bot.setCurrentOrder(order);
+            bot.setStatus(BotStatus.BUSY);
+        }
         return lines;
     }
 

@@ -77,10 +77,42 @@ public final class GatherFocus {
         if (valued.contains(type)) {
             return true;
         }
-        // Soft awareness: generalist family patterns even if config list is incomplete
+        // Soft awareness: generalist family patterns even if config list is incomplete —
+        // but never a processed/build material by default (a wall of stone bricks isn't
+        // "stone to mine"). An explicit order focus or valued-materials entry above
+        // already returned true before reaching here, so this only affects guessing.
+        if (isProcessedBuildMaterial(type)) {
+            return false;
+        }
         return isPickaxeBlock(type) || isWoodsmanBlock(type)
                 || type == Material.SAND || type == Material.GRAVEL || type == Material.CLAY
                 || type == Material.DIRT || type == Material.COARSE_DIRT;
+    }
+
+    /**
+     * Obviously crafted/placed materials a gatherer should never harvest by default,
+     * even if they'd otherwise match an ore/wood family pattern — a stone-brick wall
+     * or a glass window is a building, not a resource. Some of these also occur
+     * naturally (desert sandstone, badlands terracotta) — this errs toward treating
+     * "commonly a build material" as player-built, same as the existing plank
+     * exclusion this generalizes.
+     */
+    public static boolean isProcessedBuildMaterial(Material t) {
+        if (t == null) {
+            return false;
+        }
+        String n = t.name();
+        if (n.endsWith("_STAIRS") || n.endsWith("_SLAB") || n.endsWith("_WALL")
+                || n.endsWith("_FENCE") || n.endsWith("_FENCE_GATE") || n.endsWith("_DOOR")
+                || n.endsWith("_TRAPDOOR") || n.endsWith("_PLANKS")) {
+            return true;
+        }
+        if (n.contains("GLASS") || n.contains("CONCRETE") || n.contains("TERRACOTTA")
+                || n.contains("BRICK") || n.contains("CHISELED") || n.contains("CUT_")
+                || n.contains("POLISHED") || n.contains("SMOOTH_STONE")) {
+            return true;
+        }
+        return n.equals("LADDER") || n.equals("SCAFFOLDING");
     }
 
     /** Blocks a miner would use a pickaxe on. */

@@ -9,6 +9,7 @@ import com.aibots.npc.NpcLocations;
 import com.aibots.npc.NpcService;
 import com.aibots.npc.VillagerHandle;
 import com.aibots.storage.ChestNetwork;
+import com.aibots.storage.ProtectedZones;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -39,8 +40,10 @@ public class ScavengeSkill {
     private final ChestNetwork chests;
     private final LearningService learning;
     private final RadiusService radiusService;
+    private final ProtectedZones protectedZones;
     private final MinerTools minerTools;
     private final RailHaulHelper railHaul;
+    private final TunnelDigger tunnelDigger;
     private final Map<UUID, Material> focusMaterial = new ConcurrentHashMap<>();
     private final Map<UUID, OrderFocus> orderFocus = new ConcurrentHashMap<>();
     /** Sticky nav + stuck detection per bot */
@@ -58,18 +61,20 @@ public class ScavengeSkill {
     }
 
     public ScavengeSkill(JavaPlugin plugin, NpcService npcService, ChestNetwork chests, LearningService learning) {
-        this(plugin, npcService, chests, learning, new RadiusService(plugin));
+        this(plugin, npcService, chests, learning, new RadiusService(plugin), null);
     }
 
     public ScavengeSkill(JavaPlugin plugin, NpcService npcService, ChestNetwork chests,
-                         LearningService learning, RadiusService radiusService) {
+                         LearningService learning, RadiusService radiusService, ProtectedZones protectedZones) {
         this.plugin = plugin;
         this.npcService = npcService;
         this.chests = chests;
         this.learning = learning;
         this.radiusService = radiusService != null ? radiusService : new RadiusService(plugin);
+        this.protectedZones = protectedZones;
         this.minerTools = new MinerTools(plugin, chests, learning);
         this.railHaul = new RailHaulHelper(plugin, chests);
+        this.tunnelDigger = new TunnelDigger(plugin);
     }
 
     public MinerTools minerTools() {
@@ -98,16 +103,22 @@ public class ScavengeSkill {
         skipBlocks.remove(bot.getId());
         navByBot.remove(bot.getId());
 
-        // Always apply focus + start work when we have an order. Waiting for chat
-        // confirmation left bots standing still ("Rusty isn't doing anything").
-        applyFocus(bot, focus, order);
-        if (result.startWork) {
-            bot.setStatus(BotStatus.BUSY);
-        } else {
-            // Legacy false startWork — still engage so the body moves
-            bot.setStatus(BotStatus.BUSY);
-            learning.observe(bot, "plan", "Start (no wait) " + focus.label(), true, order);
+        if (!result.startWork) {
+            // Vague order — surveyed and asked what to gather instead of guessing.
+            // Stay idle (not busy-doing-nothing) so idle-liveliness keeps the bot
+            // visibly alive while it waits for a real order, same as if it had never
+            // been given one. No order is recorded, so the next /crew assign is a
+            // normal fresh order — no special "pending question" state to manage.
+            focusMaterial.remove(bot.getId());
+            orderFocus.remove(bot.getId());
+            bot.setCurrentOrder(null);
+            bot.setStatus(BotStatus.IDLE);
+            learning.observe(bot, "plan", "Asked what to gather", true, order);
+            return result;
         }
+
+        applyFocus(bot, focus, order);
+        bot.setStatus(BotStatus.BUSY);
         return result;
     }
 
@@ -241,6 +252,31 @@ public class ScavengeSkill {
                 radius = full;
             }
             if (target == null) {
+                // Nothing reachable via existing air pockets — try carving a short,
+                // safety-checked corridor to the nearest buried ore/stone instead of
+                // giving up outright. Surface materials (wood, sand, etc.) are always
+                // already exposed, so this only applies to pickaxe-tier blocks.
+                Block buried = tunnelDigger.activeTarget(bot);
+                if (buried == null && searchCooldownElapsed(bot)) {
+                    List<Material> tunnelValued = GatherFocus.materialsFor(plugin, bot.getTitle());
+                    OrderFocus tunnelOf = orderFocus.get(bot.getId());
+                    buried = tunnelDigger.findBuriedTarget(loc, full, b ->
+                            GatherFocus.isPickaxeBlock(b.getType())
+                                    && matchesBot(bot, b.getType(), focus, tunnelValued, tunnelOf)
+                                    && !tooCloseToStorage(bot, b)
+                                    && !isProtected(b));
+                    if (buried == null) {
+                        nextTunnelSearchMs.put(bot.getId(), System.currentTimeMillis() + 10_000L);
+                    }
+                }
+                if (buried != null) {
+                    boolean progressed = tunnelDigger.tick(bot, body, buried);
+                    if (progressed) {
+                        return;
+                    }
+                    markSkip(bot, buried);
+                    tunnelDigger.clear(bot);
+                }
                 if (carried > 0) {
                     announceReturn(bot, nav, carried);
                     deposit(bot, body, loc, home, nav);
@@ -374,6 +410,7 @@ public class ScavengeSkill {
                     && matchesBot(bot, cur.getType(), focus, valued, of)
                     && !isSkipped(bot.getId(), cur)
                     && !tooCloseToStorage(bot, cur)
+                    && !isProtected(cur)
                     && cur.getLocation().distanceSquared(loc) <= (radius + 4) * (radius + 4.0)) {
                 return cur;
             }
@@ -628,6 +665,9 @@ public class ScavengeSkill {
                     if (tooCloseToStorage(bot, b)) {
                         continue;
                     }
+                    if (isProtected(b)) {
+                        continue;
+                    }
                     if (approachNear(b, origin) == null) {
                         continue;
                     }
@@ -675,6 +715,11 @@ public class ScavengeSkill {
             return new ItemStack(Material.IRON_AXE);
         }
         return new ItemStack(Material.IRON_PICKAXE);
+    }
+
+    private boolean isProtected(Block b) {
+        return b != null && protectedZones != null
+                && protectedZones.isProtected(b.getLocation().add(0.5, 0.5, 0.5));
     }
 
     private boolean tooCloseToStorage(CrewBot bot, Block b) {
@@ -743,6 +788,14 @@ public class ScavengeSkill {
     }
 
     private final Map<UUID, Long> lastAnnounceMs = new ConcurrentHashMap<>();
+    /** Buried-target search is a full-volume block scan — throttle repeated failures
+     *  (nothing to tunnel to) instead of re-scanning every crew tick. */
+    private final Map<UUID, Long> nextTunnelSearchMs = new ConcurrentHashMap<>();
+
+    private boolean searchCooldownElapsed(CrewBot bot) {
+        Long next = nextTunnelSearchMs.get(bot.getId());
+        return next == null || System.currentTimeMillis() >= next;
+    }
 
     private void maybeAnnounce(CrewBot bot, String msg) {
         if (bot == null || msg == null) {
