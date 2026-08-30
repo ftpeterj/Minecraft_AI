@@ -534,9 +534,20 @@ public final class CitizensHandle implements NpcHandle {
             } catch (Throwable ignored) {
             }
         }
+        // Player-type NPC bodies: turn to face without a full position teleport.
+        // entity.teleport() sends a full Position+Look packet and resets client-side
+        // interpolation every call; calling it repeatedly (e.g. idle look-at-player
+        // every ~10s) fights Citizens' own network/interpolation state for its fake
+        // players and visibly warps/stretches the model. setRotation only sends the
+        // rotation, matching a real player just turning their head/body in place.
         Location here = entity.getLocation();
-        here.setDirection(loc.clone().toVector().subtract(here.toVector()));
-        entity.teleport(here);
+        Location facing = here.clone();
+        facing.setDirection(loc.clone().toVector().subtract(here.toVector()));
+        try {
+            entity.setRotation(facing.getYaw(), facing.getPitch());
+        } catch (Throwable t) {
+            entity.teleport(facing);
+        }
     }
 
     @Override
