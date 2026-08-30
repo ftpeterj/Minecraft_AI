@@ -132,7 +132,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
                 + ChatColor.GRAY + "(put wood back on cut trees)");
         sender.sendMessage(ChatColor.YELLOW + "/" + label + " reload  " + ChatColor.GRAY + "(re-read config.yml including LLM)");
         sender.sendMessage(ChatColor.GRAY + "Titles: " + BotTitle.usageList());
-        sender.sendMessage(ChatColor.GRAY + "Builder: /crew assign Bob wall 5 cobble | platform 3x3 oak | pillar 4 | box 4x3x3");
+        sender.sendMessage(ChatColor.GRAY + "Defender build orders: /crew assign Bob wall 5 cobble | platform 3x3 oak | pillar 4 | box 4x3x3");
         sender.sendMessage(ChatColor.GRAY + "All bots learn from teaching, chat, and experience (saved in learning.yml).");
         String mode = plugin.getConfig().getString("crew.avatar-mode", "villager");
         sender.sendMessage(ChatColor.GRAY + "Avatar mode: " + mode
@@ -149,7 +149,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         BotTitle title = BotTitle.parse(args[2])
                 .orElseThrow(() -> new IllegalArgumentException("Unknown title. Use " + BotTitle.usageList()));
 
-        // Console / automation: /crew summon Auto scavenger at x y z [world]
+        // Console / automation: /crew summon Auto gatherer at x y z [world]
         if (!(sender instanceof Player) && args.length >= 7 && args[3].equalsIgnoreCase("at")) {
             try {
                 int x = Integer.parseInt(args[4]);
@@ -484,7 +484,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             case "post", "add", "queue" -> {
                 if (args.length < 3) {
                     sender.sendMessage(ChatColor.RED + "Usage: /crew jobs post [title|any] <order…>");
-                    sender.sendMessage(ChatColor.GRAY + "Example: /crew jobs post miner gather iron");
+                    sender.sendMessage(ChatColor.GRAY + "Example: /crew jobs post gatherer gather iron");
                     return;
                 }
                 BotTitle preferred = null;
@@ -540,7 +540,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
     private void interBotMsg(CommandSender sender, String[] args) {
         if (args.length < 4) {
             sender.sendMessage(ChatColor.RED + "Usage: /crew msg <from> <to> <message...>");
-            sender.sendMessage(ChatColor.GRAY + "Example: /crew msg Builder Miner gather cobblestone");
+            sender.sendMessage(ChatColor.GRAY + "Example: /crew msg Rusty Alex gather cobblestone");
             return;
         }
         CrewBot from = requireBot(sender, args[1], true);
@@ -1292,9 +1292,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
         if (args.length == 3) {
             String sub = args[0].toLowerCase(Locale.ROOT);
             if (sub.equals("summon") || sub.equals("title") || sub.equals("role")) {
-                return filter(args[2], List.of(
-                        "scavenger", "miner", "woodsman", "hunter", "farmer",
-                        "warrior", "protector", "builder"));
+                return filter(args[2], List.of("gatherer", "defender"));
             }
             if (sub.equals("skin")) {
                 return filter(args[2], List.of("Steve", "Alex"));
@@ -1311,8 +1309,7 @@ public class CrewCommand implements CommandExecutor, TabCompleter {
             }
             if (sub.equals("jobs") || sub.equals("job") || sub.equals("board")) {
                 if (args[1].equalsIgnoreCase("post")) {
-                    return filter(args[2], List.of("any", "scavenger", "miner", "woodsman", "hunter",
-                            "farmer", "warrior", "protector", "builder"));
+                    return filter(args[2], List.of("any", "gatherer", "defender"));
                 }
                 if (args[1].equalsIgnoreCase("cancel")) {
                     return filter(args[2], crew.getJobBoard().listForOwner(

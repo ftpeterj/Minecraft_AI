@@ -34,12 +34,10 @@ public final class IdleLiveliness {
     );
 
     private static final Map<BotTitle, List<String>> TITLE_EMOTES = Map.of(
-            BotTitle.MINER, List.of("taps a pickaxe against a rock", "eyes the nearest cliff face"),
-            BotTitle.WOODSMAN, List.of("runs a hand along the bark", "eyes a nearby tree"),
-            BotTitle.FARMER, List.of("checks the soil", "eyes the crop rows"),
-            BotTitle.HUNTER, List.of("scans the treeline for game", "checks their bowstring"),
-            BotTitle.WARRIOR, List.of("checks their blade's edge", "keeps a wary stance"),
-            BotTitle.BUILDER, List.of("eyes the half-finished wall", "sketches something in the dirt")
+            BotTitle.GATHERER, List.of("taps a pickaxe against a rock", "eyes the nearest cliff face",
+                    "runs a hand along the bark", "eyes a nearby tree", "checks the soil", "eyes the crop rows"),
+            BotTitle.DEFENDER, List.of("checks their blade's edge", "keeps a wary stance",
+                    "scans the treeline for game", "eyes the half-finished wall", "sketches something in the dirt")
     );
 
     private final JavaPlugin plugin;

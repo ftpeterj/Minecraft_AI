@@ -166,7 +166,7 @@ public class CrewBot {
     public static CrewBot loadFrom(ConfigurationSection section) {
         UUID id = UUID.fromString(Objects.requireNonNull(section.getString("id")));
         String name = section.getString("name", "Bot");
-        BotTitle title = BotTitle.parse(section.getString("title", "BUILDER")).orElse(BotTitle.BUILDER);
+        BotTitle title = BotTitle.parse(section.getString("title", "GATHERER")).orElse(BotTitle.GATHERER);
         String skin = section.getString("skin", "Steve");
         UUID owner = UUID.fromString(Objects.requireNonNull(section.getString("owner")));
         CrewBot bot = new CrewBot(id, name, title, skin, owner);

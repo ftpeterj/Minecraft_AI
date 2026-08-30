@@ -1,7 +1,6 @@
 package com.aibots.skill;
 
 import com.aibots.crew.BotStatus;
-import com.aibots.crew.BotTitle;
 import com.aibots.crew.CrewBot;
 import com.aibots.crew.RadiusService;
 import com.aibots.learn.LearningService;
@@ -30,8 +29,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Gather engine for scavenger / miner / woodsman.
- * Each title is aware of different nearest resources ({@link GatherFocus}).
+ * Gather engine for the Gatherer title — ore, wood, and general resources
+ * ({@link GatherFocus}).
  */
 public class ScavengeSkill {
 
@@ -156,8 +155,7 @@ public class ScavengeSkill {
         String tkey = GatherFocus.configKey(bot.getTitle());
 
         String order = bot.getCurrentOrder();
-        boolean auto = plugin.getConfig().getBoolean("titles." + tkey + ".auto-when-idle",
-                plugin.getConfig().getBoolean("titles.scavenger.auto-when-idle", false));
+        boolean auto = plugin.getConfig().getBoolean("titles." + tkey + ".auto-when-idle", false);
         // Any non-blank order on a gatherer means work — not only keyword-matched phrases
         boolean ordered = order != null && !order.isBlank();
         boolean gatherWords = looksLikeGather(order);
@@ -178,8 +176,7 @@ public class ScavengeSkill {
 
         int carried = bot.getLoot().totalItems();
         // 0 → 64 (an armful, like a player). Negative → wait until no empty slots.
-        int depositThreshold = plugin.getConfig().getInt("titles." + tkey + ".deposit-threshold",
-                plugin.getConfig().getInt("titles.scavenger.deposit-threshold", 64));
+        int depositThreshold = plugin.getConfig().getInt("titles." + tkey + ".deposit-threshold", 64);
         int titleRadius = plugin.getConfig().getInt("titles." + tkey + ".gather-radius", 0);
         int global = radiusService.effective();
         // Title can raise the floor; global work-radius is the main knob (/crew radius)
@@ -203,10 +200,8 @@ public class ScavengeSkill {
         Material focus = focusMaterial.get(bot.getId());
         Block target = resolveTarget(bot, loc, radius, focus, nav);
 
-        // Miners (and scavengers doing pickaxe work): craft / repair tools first
-        if (bot.getTitle() == BotTitle.MINER
-                || (bot.getTitle() == BotTitle.SCAVENGER && target != null
-                && GatherFocus.isPickaxeBlock(target.getType()))) {
+        // Pickaxe work (ore/stone target): craft / repair tools first
+        if (target != null && GatherFocus.isPickaxeBlock(target.getType())) {
             Material needFor = target != null ? target.getType() : null;
             // If prep says gather a prereq, temporarily prefer that
             MinerTools.PrepResult prep = minerTools.ensureReady(bot, body, loc, home, needFor);
@@ -271,8 +266,8 @@ public class ScavengeSkill {
             }
         }
 
-        // Soft gate: don't waste time on ore we can't harvest yet (miner)
-        if (bot.getTitle() == BotTitle.MINER && !canHarvestWithCurrentTools(bot, target.getType())) {
+        // Soft gate: don't waste time on ore we can't harvest yet
+        if (GatherFocus.isPickaxeBlock(target.getType()) && !canHarvestWithCurrentTools(bot, target.getType())) {
             MinerTools.Tier need = MinerTools.requiredTier(target.getType());
             if (!minerTools.shouldThrottleMessage(bot.getId())) {
                 org.bukkit.entity.Player owner = bot.getOwnerPlayer();
@@ -597,7 +592,6 @@ public class ScavengeSkill {
      */
     private Block findNearest(CrewBot bot, Location origin, int radius, Material focus,
                               List<Material> valued, OrderFocus of, Set<String> skip) {
-        BotTitle title = bot.getTitle();
         Block best = null;
         double bestD = Double.MAX_VALUE;
         // Honor requested radius (was hard-capped at 32 — ignored /crew radius)
@@ -610,8 +604,11 @@ public class ScavengeSkill {
             return null;
         }
 
-        int yMin = title == BotTitle.MINER ? -24 : -6;
-        int yMax = title == BotTitle.WOODSMAN ? 16 : (title == BotTitle.MINER ? 8 : 10);
+        // Union of ore-depth (mining) and canopy-height (woodcutting) ranges — a
+        // generalist gatherer needs both. Costs more per-tick scan volume than a
+        // single-role bot would, but this only runs when there's no cached target.
+        int yMin = -24;
+        int yMax = 16;
 
         for (int x = -r; x <= r; x++) {
             for (int y = yMin; y <= yMax; y++) {
@@ -635,10 +632,10 @@ public class ScavengeSkill {
                         continue;
                     }
                     double d = b.getLocation().add(0.5, 0.5, 0.5).distanceSquared(origin);
-                    if (title == BotTitle.WOODSMAN && t.name().endsWith("_LEAVES")) {
+                    if (t.name().endsWith("_LEAVES")) {
                         d += 2.0;
                     }
-                    if (title == BotTitle.WOODSMAN && t.name().endsWith("_LOG") && y > 3) {
+                    if (t.name().endsWith("_LOG") && y > 3) {
                         d += 1.5;
                     }
                     if (d < bestD) {
@@ -664,13 +661,13 @@ public class ScavengeSkill {
     }
 
     private ItemStack toolForBlock(CrewBot bot, Material block) {
-        if (GatherFocus.isPickaxeBlock(block) || bot.getTitle() == BotTitle.MINER) {
+        if (GatherFocus.isPickaxeBlock(block)) {
             ItemStack pick = minerTools.bestPick(bot.getLoot());
             if (pick != null) {
                 return pick;
             }
         }
-        if (GatherFocus.isWoodsmanBlock(block) || bot.getTitle() == BotTitle.WOODSMAN) {
+        if (GatherFocus.isWoodsmanBlock(block)) {
             ItemStack axe = bot.getLoot().findFirst(i -> i.getType().name().endsWith("_AXE"));
             if (axe != null) {
                 return axe;

@@ -64,7 +64,7 @@ public final class HunterSkill {
 
         String order = bot.getCurrentOrder();
         boolean ordered = order != null && looksLikeHunt(order);
-        boolean auto = plugin.getConfig().getBoolean("titles.hunter.auto-when-idle", false);
+        boolean auto = plugin.getConfig().getBoolean("titles.defender.auto-when-idle", false);
         if (!ordered && !(auto && bot.getStatus() == BotStatus.IDLE)) {
             return;
         }
@@ -73,10 +73,10 @@ public final class HunterSkill {
         }
 
         Location home = bot.getHome() != null ? bot.getHome() : loc;
-        double range = plugin.getConfig().getDouble("titles.hunter.hunt-radius", 24);
-        double damage = plugin.getConfig().getDouble("titles.hunter.attack-damage", 5.0);
+        double range = plugin.getConfig().getDouble("titles.defender.hunt-radius", 24);
+        double damage = plugin.getConfig().getDouble("titles.defender.attack-damage", 5.0);
 
-        int depositThreshold = plugin.getConfig().getInt("titles.hunter.deposit-threshold", 64);
+        int depositThreshold = plugin.getConfig().getInt("titles.defender.deposit-threshold", 64);
         if (bot.getLoot().shouldDeposit(depositThreshold)
                 || (bot.getLoot().totalItems() > 0 && findPrey(loc, range) == null)) {
             deposit(bot, body, loc, home);

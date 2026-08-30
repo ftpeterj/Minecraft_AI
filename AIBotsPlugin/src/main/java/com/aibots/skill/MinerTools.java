@@ -85,8 +85,7 @@ public final class MinerTools {
     }
 
     public static boolean isMinerRole(BotTitle title) {
-        return title == BotTitle.MINER
-                || (title == BotTitle.SCAVENGER); // scavengers may mine stone/ore too
+        return title == BotTitle.GATHERER;
     }
 
     public static boolean isPickaxe(Material m) {

@@ -31,12 +31,20 @@ public final class CombatCrewSkill implements CrewSkill {
     @Override
     public boolean canHandle(CrewBot bot, String order) {
         if (order == null || order.isBlank()) {
-            return bot.getTitle() == BotTitle.PROTECTOR;
+            return true;
         }
         String o = order.toLowerCase(Locale.ROOT);
-        return o.contains("guard") || o.contains("protect") || o.contains("patrol")
-                || o.contains("fight") || o.contains("attack") || o.contains("defend")
-                || o.contains("kill") || o.contains("hostile");
+        // Defer to Hunter for orders naming a passive/huntable animal — "kill the cow"
+        // is a hunt order, not a guard/attack order, even though it contains "kill".
+        boolean namesAnimal = o.contains("cow") || o.contains("pig") || o.contains("sheep")
+                || o.contains("chicken") || o.contains("rabbit") || o.contains("animal") || o.contains("meat");
+        boolean explicitGuard = o.contains("guard") || o.contains("protect") || o.contains("patrol")
+                || o.contains("hostile");
+        if (namesAnimal && !explicitGuard) {
+            return false;
+        }
+        return explicitGuard || o.contains("fight") || o.contains("attack")
+                || o.contains("defend") || o.contains("kill");
     }
 
     @Override

@@ -142,66 +142,29 @@ storage:
   register-y-pad-above: 8
 
 titles:
-  # Generalist — notices nearest of logs, stone/ores, sand/gravel, etc.
-  scavenger:
-    display: "Scavenger"
+  # Generalist resource role — mining, woodcutting, scavenging, farming, and fishing
+  # all in one title. Leave valued-materials empty for built-in mixed awareness
+  # (ore/stone, wood/flora, sand/gravel/clay) alongside farm-radius/fish-radius scans.
+  gatherer:
+    display: "Gatherer"
     color: "GOLD"
-    personality: "You scavenge whatever useful resource is nearest. You fill chests and expand storage. You help teammates who need materials."
-    gather-radius: 24
+    personality: "You gather whatever resource the job needs. You mine ore and stone (matching pick tier to the block, crafting/smelting/repairing as needed via table, furnace, anvil), chop wood, harvest and replant crops, and fish. You fill chests and expand storage, and help teammates who need materials."
+    gather-radius: 28
+    farm-radius: 20
+    fish-radius: 20
     # Items in bag before walking home to stash (0 = 64, like a player armful). -1 = wait until every slot is used.
     deposit-threshold: 64
-    # Scavenge nearest useful blocks even without a spoken order (after home is set)
+    # Auto-gather nearest useful blocks even without a spoken order (after home is set).
+    # Farming/fishing only trigger on an explicit order, same as before this merge.
     auto-when-idle: true
-    # Leave valued-materials empty to use built-in scavenger awareness (mixed).
     valued-materials: []
-  # Pickaxe work — stone, deepslate, ores, netherrack, etc.
-  miner:
-    display: "Miner"
-    color: "DARK_GRAY"
-    personality: "You are a miner. You know pickaxe tiers and recipes (table, sticks, picks, furnace, anvil). You craft the right pick for the rock, smelt iron when needed, and prefer anvil repair over crafting brand-new tools when gear is damaged."
-    gather-radius: 28
-    deposit-threshold: 64
-    auto-when-idle: false
-    valued-materials: []
-  # Forest work — trees, leaves, flowers, saplings, mushrooms, vines
-  woodsman:
-    display: "Woodsman"
-    color: "DARK_GREEN"
-    personality: "You are a woodsman. You harvest the nearest trees, leaves, flowers, and forest plants. You keep the storage stocked with wood and flora."
-    gather-radius: 32
-    deposit-threshold: 64
-    auto-when-idle: false
-    valued-materials: []
-  hunter:
-    display: "Hunter"
-    color: "GOLD"
-    personality: "You hunt wild animals for meat and drops. You avoid tamed pets and deposit food to storage."
+  # Builds, hunts animals, and defends an area — patrols/engages automatically when idle.
+  defender:
+    display: "Defender"
+    color: "RED"
+    personality: "You build structures (walls, platforms, pillars, box huts from storage materials — ask gatherers when short on blocks), hunt wild animals for meat and drops (avoiding tamed pets, depositing food to storage), and guard the owner and home — patrolling and engaging hostiles automatically."
+    engage-radius: 18
     hunt-radius: 24
     attack-damage: 5.0
-    auto-when-idle: false
-  farmer:
-    display: "Farmer"
-    color: "GREEN"
-    personality: "You harvest mature crops and replant seeds. You tend fields near home."
-    farm-radius: 20
-    auto-when-idle: false
-  warrior:
-    display: "Warrior"
-    color: "RED"
-    personality: "You fight hostiles on order and can patrol. You learn threats."
-    engage-radius: 16
-    attack-damage: 5.0
-    guard-owner: true
-    auto-when-idle: false
-  protector:
-    display: "Protector"
-    color: "DARK_RED"
-    personality: "You automatically guard the owner and home, patrol, and engage monsters."
-    engage-radius: 18
-    attack-damage: 4.0
     guard-owner: true
     auto-when-idle: true
-  builder:
-    display: "Builder"
-    color: "AQUA"
-    personality: "You construct buildings and structures. You build walls, platforms, pillars, and simple box huts from storage materials. When short on blocks you ask gatherers for help."

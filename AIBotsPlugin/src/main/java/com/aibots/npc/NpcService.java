@@ -275,14 +275,9 @@ public class NpcService {
     }
 
     private static ItemStack heldItemFor(BotTitle title) {
-        Material mat = switch (title == null ? BotTitle.SCAVENGER : title) {
-            case MINER -> Material.IRON_PICKAXE;
-            case WOODSMAN -> Material.IRON_AXE;
-            case SCAVENGER -> Material.STONE_PICKAXE;
-            case HUNTER -> Material.BOW;
-            case FARMER -> Material.IRON_HOE;
-            case WARRIOR, PROTECTOR -> Material.IRON_SWORD;
-            case BUILDER -> Material.IRON_SHOVEL;
+        Material mat = switch (title == null ? BotTitle.GATHERER : title) {
+            case GATHERER -> Material.IRON_PICKAXE;
+            case DEFENDER -> Material.IRON_SWORD;
         };
         return new ItemStack(mat);
     }

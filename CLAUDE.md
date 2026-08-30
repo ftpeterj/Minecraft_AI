@@ -99,13 +99,15 @@ Live `plugins/AIBots/config.yml` has been seen still on **villager** + **deposit
 
 `/crew summon <name> <title>` · `/crew home <name>` · `/crew assign` · `/crew jobs` · `/crew deposit` · `/crew inv` · `/crew llm` · `/crew reload` · `/crew healtrees <radius>` · `/crew storage register`
 
-Titles: scavenger, miner, woodsman, hunter, farmer, warrior, protector, builder.
+Titles: gatherer (mining, woodcutting, scavenging, farming, fishing), defender (building, hunting, guard/patrol). Consolidated from the old 8-title roster (scavenger/miner/woodsman/hunter/farmer/warrior/protector/builder) on 2026-08-30 — too many single-purpose roles to maintain well. Old title names no longer parse.
 
-## Status snapshot (2026-08-28)
+## Status snapshot (2026-08-30)
 
-Shipped in 1.6.5: Ollama primary, player avatars, deposit-to-home, storage keepout, unstick, nearby tree heal, co-op prompts.
+Shipped in 1.6.5: Ollama primary, deposit-to-home, storage keepout, unstick, nearby tree heal, co-op prompts, idle liveliness (wander/look/emote when idle), per-bot skin pool, villager-body collision fix, gatherer/defender title merge + new fishing skill.
 
-Not done: idle initiative that still defers to the player (Slice 3), world event bus, builder shopping-list → job board, hybrid local-then-cloud LLM.
+**Avatar mode is back on `villager`** (not `player`/Citizens) — Citizens `PLAYER`-type NPCs render with corrupted/warped body geometry on this server's Minecraft version even after upgrading Citizens and fixing a teleport-vs-rotation bug in our own code; root cause looks upstream (Citizens + this MC version), not fixed. **Mineflayer was investigated as a real-player-character alternative and is blocked**: it doesn't yet support this server's exact Minecraft version (26.1.2) — see PrismarineJS/mineflayer issue #3893 (open as of 2026-04-22). Revisit both once either gets upstream support.
+
+Not done: idle initiative that still defers to the player (Slice 3, though idle liveliness now covers the cosmetic half), world event bus, builder shopping-list → job board, hybrid local-then-cloud LLM.
 
 Choppiness: Kappa shaders at render/sim/shadow 32 + Qwen 14B on the same 12GB 6700 XT. Lower shadow/render or quit LM Studio.
 

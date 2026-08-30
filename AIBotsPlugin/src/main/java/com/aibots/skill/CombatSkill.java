@@ -1,7 +1,6 @@
 package com.aibots.skill;
 
 import com.aibots.crew.BotStatus;
-import com.aibots.crew.BotTitle;
 import com.aibots.crew.CrewBot;
 import com.aibots.learn.LearningService;
 import com.aibots.npc.NpcHandle;
@@ -53,16 +52,11 @@ public final class CombatSkill {
 
         String order = bot.getCurrentOrder();
         boolean ordered = order != null && looksLikeCombat(order);
-        boolean auto = plugin.getConfig().getBoolean("titles." + bot.getTitle().name().toLowerCase() + ".auto-when-idle",
-                plugin.getConfig().getBoolean("titles.protector.auto-when-idle", true));
+        boolean auto = plugin.getConfig().getBoolean("titles.defender.auto-when-idle", true);
         if (!ordered && !(auto && bot.getStatus() != BotStatus.STOPPED)) {
-            // Protectors default to auto-patrol when idle
-            if (bot.getTitle() == BotTitle.PROTECTOR || bot.getTitle() == BotTitle.WARRIOR) {
-                if (bot.getStatus() == BotStatus.IDLE || bot.getStatus() == BotStatus.BUSY) {
-                    // fall through with auto
-                } else {
-                    return;
-                }
+            // Defenders default to auto-patrol when idle
+            if (bot.getStatus() == BotStatus.IDLE || bot.getStatus() == BotStatus.BUSY) {
+                // fall through with auto
             } else {
                 return;
             }
@@ -71,13 +65,9 @@ public final class CombatSkill {
             bot.setStatus(BotStatus.BUSY);
         }
 
-        String tkey = bot.getTitle().name().toLowerCase();
-        double range = plugin.getConfig().getDouble("titles." + tkey + ".engage-radius",
-                plugin.getConfig().getDouble("titles.protector.engage-radius", 16));
-        double damage = plugin.getConfig().getDouble("titles." + tkey + ".attack-damage",
-                plugin.getConfig().getDouble("titles.protector.attack-damage", 4.0));
-        boolean guardOwner = plugin.getConfig().getBoolean("titles." + tkey + ".guard-owner",
-                plugin.getConfig().getBoolean("titles.protector.guard-owner", true));
+        double range = plugin.getConfig().getDouble("titles.defender.engage-radius", 16);
+        double damage = plugin.getConfig().getDouble("titles.defender.attack-damage", 4.0);
+        boolean guardOwner = plugin.getConfig().getBoolean("titles.defender.guard-owner", true);
 
         Location anchor = bot.getHome() != null ? bot.getHome() : loc;
         Player owner = bot.getOwnerPlayer();
@@ -182,8 +172,14 @@ public final class CombatSkill {
             return false;
         }
         String l = order.toLowerCase();
-        return l.contains("guard") || l.contains("protect") || l.contains("patrol")
-                || l.contains("defend") || l.contains("kill") || l.contains("fight")
-                || l.contains("attack") || l.contains("secure") || l.contains("watch");
+        boolean namesAnimal = l.contains("cow") || l.contains("pig") || l.contains("sheep")
+                || l.contains("chicken") || l.contains("rabbit") || l.contains("animal") || l.contains("meat");
+        boolean explicitGuard = l.contains("guard") || l.contains("protect") || l.contains("patrol")
+                || l.contains("secure") || l.contains("watch");
+        if (namesAnimal && !explicitGuard) {
+            return false;
+        }
+        return explicitGuard || l.contains("defend") || l.contains("kill")
+                || l.contains("fight") || l.contains("attack");
     }
 }

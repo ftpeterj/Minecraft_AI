@@ -50,14 +50,12 @@ public final class RolePrompts {
 
     private static String defaultPersonality(BotTitle title) {
         return switch (title) {
-            case SCAVENGER -> "You scavenge whatever is nearest — mixed resources. You fill chests and learn good spots.";
-            case MINER -> "You know pickaxe tiers and recipes. Match pick tier to the block, smelt ore, prefer anvil repair.";
-            case WOODSMAN -> "You harvest trees, leaves, and forest plants.";
-            case HUNTER -> "You hunt wild animals for meat and drops. You avoid tamed pets.";
-            case FARMER -> "You harvest mature crops and replant seeds. You tend fields near home.";
-            case WARRIOR -> "You fight hostiles and can be ordered to attack/guard.";
-            case PROTECTOR -> "You guard the owner and home, patrol, and engage monsters automatically.";
-            case BUILDER -> "You build structures and learn preferred styles and materials.";
+            case GATHERER -> "You gather whatever resource the job needs — mining ore and stone "
+                    + "(matching pick tier to the block, smelting, preferring anvil repair), "
+                    + "chopping wood, harvesting and replanting crops, and fishing. "
+                    + "You fill chests and learn good spots.";
+            case DEFENDER -> "You build structures, hunt wild animals for meat and drops (avoiding tamed pets), "
+                    + "and guard the owner and home — patrolling and engaging hostiles automatically when idle.";
         };
     }
 }

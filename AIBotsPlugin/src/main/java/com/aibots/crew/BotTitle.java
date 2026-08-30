@@ -1,20 +1,16 @@
 package com.aibots.crew;
 
+import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Role / title a crew bot can hold.
  */
 public enum BotTitle {
-    SCAVENGER("Scavenger", "GOLD", RoleKind.GATHER),
-    MINER("Miner", "DARK_GRAY", RoleKind.GATHER),
-    WOODSMAN("Woodsman", "DARK_GREEN", RoleKind.GATHER),
-    HUNTER("Hunter", "GOLD", RoleKind.HUNT),
-    FARMER("Farmer", "GREEN", RoleKind.FARM),
-    WARRIOR("Warrior", "RED", RoleKind.COMBAT),
-    PROTECTOR("Protector", "DARK_RED", RoleKind.COMBAT),
-    BUILDER("Builder", "AQUA", RoleKind.BUILD);
+    GATHERER("Gatherer", "GOLD", Set.of(RoleKind.GATHER, RoleKind.FARM)),
+    DEFENDER("Defender", "RED", Set.of(RoleKind.BUILD, RoleKind.HUNT, RoleKind.COMBAT));
 
     public enum RoleKind {
         GATHER, HUNT, FARM, COMBAT, BUILD
@@ -22,12 +18,12 @@ public enum BotTitle {
 
     private final String display;
     private final String defaultColor;
-    private final RoleKind kind;
+    private final Set<RoleKind> kinds;
 
-    BotTitle(String display, String defaultColor, RoleKind kind) {
+    BotTitle(String display, String defaultColor, Set<RoleKind> kinds) {
         this.display = display;
         this.defaultColor = defaultColor;
-        this.kind = kind;
+        this.kinds = EnumSet.copyOf(kinds);
     }
 
     public String display() {
@@ -38,24 +34,28 @@ public enum BotTitle {
         return defaultColor;
     }
 
-    public RoleKind kind() {
-        return kind;
+    public Set<RoleKind> kinds() {
+        return kinds;
     }
 
     public boolean isGatherer() {
-        return kind == RoleKind.GATHER;
+        return kinds.contains(RoleKind.GATHER);
     }
 
     public boolean isCombat() {
-        return kind == RoleKind.COMBAT;
+        return kinds.contains(RoleKind.COMBAT);
     }
 
     public boolean isHunter() {
-        return kind == RoleKind.HUNT;
+        return kinds.contains(RoleKind.HUNT);
     }
 
     public boolean isFarmer() {
-        return kind == RoleKind.FARM;
+        return kinds.contains(RoleKind.FARM);
+    }
+
+    public boolean isBuilder() {
+        return kinds.contains(RoleKind.BUILD);
     }
 
     public static Optional<BotTitle> parse(String raw) {
@@ -66,14 +66,12 @@ public enum BotTitle {
                 .replace('-', '_')
                 .replace(' ', '_');
         return switch (key) {
-            case "SCAVENGER", "SCAV", "GATHERER", "GATHER" -> Optional.of(SCAVENGER);
-            case "MINER", "MINE", "DIGGER" -> Optional.of(MINER);
-            case "WOODSMAN", "WOODSMEN", "LUMBERJACK", "LUMBER", "FORESTER", "WOODCUTTER", "LOGGER" -> Optional.of(WOODSMAN);
-            case "HUNTER", "HUNT", "TRAPPER" -> Optional.of(HUNTER);
-            case "FARMER", "FARM", "AGRICULTURE", "RANCHER" -> Optional.of(FARMER);
-            case "WARRIOR", "FIGHTER", "SOLDIER" -> Optional.of(WARRIOR);
-            case "PROTECTOR", "GUARD", "DEFENDER", "SENTINEL" -> Optional.of(PROTECTOR);
-            case "BUILDER", "BUILD", "ARCHITECT" -> Optional.of(BUILDER);
+            case "GATHERER", "GATHER", "SCAVENGER", "SCAV", "MINER", "MINE", "DIGGER",
+                    "WOODSMAN", "WOODSMEN", "LUMBERJACK", "LUMBER", "FORESTER", "WOODCUTTER", "LOGGER",
+                    "FARMER", "FARM", "AGRICULTURE", "RANCHER", "FISHER", "FISHERMAN" -> Optional.of(GATHERER);
+            case "DEFENDER", "DEFEND", "BUILDER", "BUILD", "ARCHITECT",
+                    "HUNTER", "HUNT", "TRAPPER",
+                    "WARRIOR", "FIGHTER", "SOLDIER", "PROTECTOR", "GUARD", "SENTINEL" -> Optional.of(DEFENDER);
             default -> {
                 try {
                     yield Optional.of(BotTitle.valueOf(key));
@@ -85,6 +83,6 @@ public enum BotTitle {
     }
 
     public static String usageList() {
-        return "scavenger|miner|woodsman|hunter|farmer|warrior|protector|builder";
+        return "gatherer|defender";
     }
 }

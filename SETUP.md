@@ -75,20 +75,20 @@ Add `api-key` under `llm.providers.openai` or `llm.providers.grok`. Leave blank 
 ## 4. In-game quick start
 
 ```
-/crew summon Rusty scavenger
+/crew summon Rusty gatherer
 /crew home Rusty
 /crew assign Rusty gather wood
-/crew summon Bob builder
+/crew summon Bob defender
 /crew assign Bob wall 5 cobble
 /crew msg Bob Rusty gather cobblestone
 /crew jobs list
-/crew jobs post miner gather iron
+/crew jobs post gatherer gather iron
 /crew storage list
 /crew has oak_log
 ```
 
 ### Titles
-`scavenger | miner | woodsman | hunter | farmer | warrior | protector | builder`
+`gatherer | defender`
 
 ### Useful commands
 | Command | Purpose |
@@ -128,7 +128,7 @@ Or:
 If pos1 and pos2 are on the same floor Y, the box is a flat slab and wall chests are missed.  
 **What worked in play:** floor corner for pos1, **ceiling / top of chest wall** for pos2, then register.
 
-### Builder orders
+### Defender build orders
 - `wall 5` / `wall 5x2 cobble`
 - `platform 3x3 oak`
 - `pillar 4`
@@ -137,12 +137,12 @@ If pos1 and pos2 are on the same floor Y, the box is a flat slab and wall chests
 ## 5. Testing checklist
 
 - [ ] Ollama health in server log on enable (`/crew llm`)  
-- [ ] Summon scavenger → home → chest appears nearby  
+- [ ] Summon gatherer → home → chest appears nearby  
 - [ ] Assign gather → bot walks / deposits  
 - [ ] Register storage room with pos1/pos2 at **different Y** → list shows all chests  
 - [ ] `/crew deposit <bot>` moves bag items into network  
-- [ ] `/crew jobs post woodsman gather oak` → idle woodsman claims  
-- [ ] Builder short on blocks → material request / job  
+- [ ] `/crew jobs post gatherer gather oak` → idle gatherer claims  
+- [ ] Defender short on blocks → material request / job  
 - [ ] Right-click villager → loot bag (not trades)
 
 ## 6. Monorepo layout

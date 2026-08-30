@@ -25,7 +25,7 @@ public final class BuilderCrewSkill implements CrewSkill {
 
     @Override
     public boolean appliesTo(BotTitle title) {
-        return title == BotTitle.BUILDER;
+        return title == BotTitle.DEFENDER;
     }
 
     @Override

@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Routes orders to the correct {@link CrewSkill} by title and canHandle.
@@ -18,6 +20,11 @@ import java.util.Optional;
 public final class SkillRegistry {
 
     private final Map<String, CrewSkill> byId = new LinkedHashMap<>();
+    /** Which skill actually accept()-ed each bot's current order — tick()/stop() must
+     *  keep hitting that same skill instance while the order is active, not just
+     *  whichever skill is first-registered for the title (a title can now cover
+     *  several skills at once). Cleared when the order finishes. */
+    private final Map<UUID, CrewSkill> activeSkillByBot = new ConcurrentHashMap<>();
 
     public void register(CrewSkill skill) {
         if (skill != null) {
@@ -70,16 +77,35 @@ public final class SkillRegistry {
     }
 
     public List<String> accept(CrewBot bot, String order, Location origin) {
-        return resolve(bot, order)
+        Optional<CrewSkill> chosen = resolve(bot, order);
+        List<String> lines = chosen
                 .map(s -> s.accept(bot, order, origin))
                 .orElseGet(ArrayList::new);
+        if (chosen.isPresent() && bot.getCurrentOrder() != null && !bot.getCurrentOrder().isBlank()) {
+            activeSkillByBot.put(bot.getId(), chosen.get());
+        }
+        return lines;
     }
 
     public void tick(CrewBot bot) {
+        String order = bot.getCurrentOrder();
+        CrewSkill active = activeSkillByBot.get(bot.getId());
+        if (active != null && order != null && !order.isBlank()) {
+            active.tick(bot);
+            return;
+        }
+        // Order finished or was never set — fall back to the title's default skill
+        // (first-registered for the title) so auto-when-idle behavior still runs.
+        activeSkillByBot.remove(bot.getId());
         forTitle(bot.getTitle()).ifPresent(s -> s.tick(bot));
     }
 
     public void stop(CrewBot bot) {
+        CrewSkill active = activeSkillByBot.remove(bot.getId());
+        if (active != null) {
+            active.onStop(bot);
+            return;
+        }
         forTitle(bot.getTitle()).ifPresent(s -> s.onStop(bot));
     }
 }

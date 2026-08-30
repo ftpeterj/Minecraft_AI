@@ -117,14 +117,8 @@ public final class VillagerHandle implements NpcHandle {
             return Villager.Profession.NITWIT;
         }
         return switch (title) {
-            case SCAVENGER -> Villager.Profession.TOOLSMITH;
-            case MINER -> Villager.Profession.ARMORER;
-            case WOODSMAN -> Villager.Profession.FLETCHER;
-            case HUNTER -> Villager.Profession.BUTCHER;
-            case FARMER -> Villager.Profession.FARMER;
-            case WARRIOR -> Villager.Profession.WEAPONSMITH;
-            case PROTECTOR -> Villager.Profession.WEAPONSMITH;
-            case BUILDER -> Villager.Profession.MASON;
+            case GATHERER -> Villager.Profession.FISHERMAN;
+            case DEFENDER -> Villager.Profession.WEAPONSMITH;
         };
     }
 

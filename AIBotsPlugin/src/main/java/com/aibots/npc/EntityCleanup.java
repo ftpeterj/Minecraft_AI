@@ -132,7 +132,11 @@ public final class EntityCleanup {
             return false;
         }
         String full = stripColor(customName).toLowerCase(Locale.ROOT);
-        return full.contains("[scavenger]")
+        // Current tags plus older titles from before the Gatherer/Defender consolidation,
+        // so orphans from a previous version still get cleaned up.
+        return full.contains("[gatherer]")
+                || full.contains("[defender]")
+                || full.contains("[scavenger]")
                 || full.contains("[miner]")
                 || full.contains("[woodsman]")
                 || full.contains("[hunter]")

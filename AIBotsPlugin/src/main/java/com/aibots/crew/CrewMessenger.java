@@ -102,14 +102,6 @@ public final class CrewMessenger {
         String body = "NEED " + material.name() + " " + amount + " | " + text;
         BotTitle prefer = preferTitleFor(material);
         Optional<CrewBot> target = findTeammate(from, prefer);
-        if (target.isEmpty()) {
-            for (BotTitle t : List.of(BotTitle.SCAVENGER, BotTitle.MINER, BotTitle.WOODSMAN)) {
-                target = findTeammate(from, t);
-                if (target.isPresent()) {
-                    break;
-                }
-            }
-        }
         // Always post a gather job so idle gatherers can claim even if target is busy
         if (jobBoard != null) {
             String order = "gather " + pretty(material);
@@ -271,18 +263,7 @@ public final class CrewMessenger {
     }
 
     private static BotTitle preferTitleFor(Material m) {
-        if (m == null) {
-            return BotTitle.SCAVENGER;
-        }
-        String n = m.name();
-        if (n.contains("LOG") || n.contains("WOOD") || n.contains("LEAVES") || n.contains("SAPLING")) {
-            return BotTitle.WOODSMAN;
-        }
-        if (n.contains("ORE") || n.contains("STONE") || n.contains("DEEPSLATE") || n.contains("COBBLE")
-                || n.contains("IRON") || n.contains("DIAMOND") || n.contains("COAL")) {
-            return BotTitle.MINER;
-        }
-        return BotTitle.SCAVENGER;
+        return BotTitle.GATHERER;
     }
 
     private static String pretty(Material m) {

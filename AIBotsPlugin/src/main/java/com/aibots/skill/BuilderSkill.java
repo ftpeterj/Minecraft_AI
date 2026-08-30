@@ -87,7 +87,7 @@ public final class BuilderSkill {
     }
 
     public void tick(CrewBot bot) {
-        if (bot.getTitle() == null || bot.getTitle() != BotTitle.BUILDER) {
+        if (bot.getTitle() == null || bot.getTitle() != BotTitle.DEFENDER) {
             return;
         }
         if (bot.getStatus() == BotStatus.STOPPED || bot.getStatus() == BotStatus.DISMISSED) {

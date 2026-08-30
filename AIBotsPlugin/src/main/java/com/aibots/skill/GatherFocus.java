@@ -19,10 +19,7 @@ public final class GatherFocus {
     }
 
     public static String configKey(BotTitle title) {
-        if (title == null) {
-            return "scavenger";
-        }
-        return title.name().toLowerCase(Locale.ROOT);
+        return "gatherer";
     }
 
     /**
@@ -46,20 +43,13 @@ public final class GatherFocus {
         return new ArrayList<>(defaultsFor(title));
     }
 
+    /** Gatherer is a generalist — ore, wood, and surface materials all in one bucket. */
     public static Set<Material> defaultsFor(BotTitle title) {
-        if (title == null) {
-            title = BotTitle.SCAVENGER;
-        }
-        return switch (title) {
-            case MINER -> minerDefaults();
-            case WOODSMAN -> woodsmanDefaults();
-            case SCAVENGER -> scavengerDefaults();
-            default -> scavengerDefaults();
-        };
+        return gathererDefaults();
     }
 
     /**
-     * True if this material is something the title cares about
+     * True if this material is something a generalist gatherer cares about
      * (explicit list, family match, or order focus).
      */
     public static boolean matches(BotTitle title, Material type, Material orderFocus, List<Material> valued) {
@@ -81,21 +71,16 @@ public final class GatherFocus {
             if (orderFocus == Material.COBBLESTONE && (type == Material.STONE || type == Material.COBBLESTONE)) {
                 return true;
             }
-            // If order focus is set, only that focus (don't harvest other title materials)
+            // If order focus is set, only that focus (don't harvest unrelated materials)
             return false;
         }
         if (valued.contains(type)) {
             return true;
         }
-        // Soft awareness: title family patterns even if config list is incomplete
-        return switch (title) {
-            case MINER -> isPickaxeBlock(type);
-            case WOODSMAN -> isWoodsmanBlock(type);
-            case SCAVENGER -> isPickaxeBlock(type) || isWoodsmanBlock(type)
-                    || type == Material.SAND || type == Material.GRAVEL || type == Material.CLAY
-                    || type == Material.DIRT || type == Material.COARSE_DIRT;
-            default -> false;
-        };
+        // Soft awareness: generalist family patterns even if config list is incomplete
+        return isPickaxeBlock(type) || isWoodsmanBlock(type)
+                || type == Material.SAND || type == Material.GRAVEL || type == Material.CLAY
+                || type == Material.DIRT || type == Material.COARSE_DIRT;
     }
 
     /** Blocks a miner would use a pickaxe on. */
@@ -161,7 +146,7 @@ public final class GatherFocus {
         return false;
     }
 
-    private static Set<Material> scavengerDefaults() {
+    private static Set<Material> gathererDefaults() {
         Set<Material> s = EnumSet.noneOf(Material.class);
         s.addAll(minerDefaults());
         s.addAll(woodsmanDefaults());

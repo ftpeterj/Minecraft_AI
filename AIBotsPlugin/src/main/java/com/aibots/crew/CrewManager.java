@@ -14,6 +14,8 @@ import com.aibots.skill.CombatCrewSkill;
 import com.aibots.skill.CombatSkill;
 import com.aibots.skill.FarmerCrewSkill;
 import com.aibots.skill.FarmerSkill;
+import com.aibots.skill.FishingCrewSkill;
+import com.aibots.skill.FishingSkill;
 import com.aibots.skill.GatherCrewSkill;
 import com.aibots.skill.HunterCrewSkill;
 import com.aibots.skill.HunterSkill;
@@ -77,12 +79,18 @@ public class CrewManager {
         CombatSkill combatSkill = new CombatSkill(plugin, npcService, learning);
         HunterSkill hunterSkill = new HunterSkill(plugin, npcService, chestNetwork, learning);
         FarmerSkill farmerSkill = new FarmerSkill(plugin, npcService, chestNetwork, learning);
+        FishingSkill fishingSkill = new FishingSkill(plugin, npcService, chestNetwork, learning);
         this.builderSkill = new BuilderSkill(plugin, npcService, chestNetwork, learning);
         this.skills = new SkillRegistry();
+        // Registration order matters: for a given title, the first-registered skill
+        // that appliesTo() it becomes the idle/auto-when-idle default (SkillRegistry
+        // .forTitle()) — Gather first for GATHERER (mixed auto-scavenge), Combat first
+        // for DEFENDER (auto-patrol/guard).
         this.skills.register(new GatherCrewSkill(scavengeSkill));
         this.skills.register(new CombatCrewSkill(combatSkill));
         this.skills.register(new HunterCrewSkill(hunterSkill));
         this.skills.register(new FarmerCrewSkill(farmerSkill));
+        this.skills.register(new FishingCrewSkill(fishingSkill));
         this.skills.register(new BuilderCrewSkill(builderSkill));
         this.idleLiveliness = new IdleLiveliness(plugin, npcService);
         this.jobBoard = new CrewJobBoard(plugin);
@@ -751,7 +759,7 @@ public class CrewManager {
         LLMContext.Complexity complexity = looksComplex(playerMessage)
                 ? LLMContext.Complexity.COMPLEX
                 : LLMContext.Complexity.SIMPLE;
-        LLMContext.TaskType taskType = taskTypeFor(bot.getTitle());
+        LLMContext.TaskType taskType = taskTypeFor(bot);
         LLMContext ctx = LLMContext.builder()
                 .botName(bot.getName())
                 .botId(bot.getId())
@@ -826,15 +834,24 @@ public class CrewManager {
                 || m.contains("coordinate");
     }
 
-    private static LLMContext.TaskType taskTypeFor(BotTitle title) {
+    /**
+     * A title can now cover several skills at once (Defender = build+hunt+combat),
+     * so this classifies by what the bot is actually doing (current order) rather
+     * than the title alone.
+     */
+    private static LLMContext.TaskType taskTypeFor(CrewBot bot) {
+        BotTitle title = bot.getTitle();
         if (title == null) {
             return LLMContext.TaskType.CHAT;
         }
-        return switch (title.kind()) {
-            case BUILD -> LLMContext.TaskType.BUILD;
-            case COMBAT -> LLMContext.TaskType.COMBAT;
-            case GATHER, HUNT, FARM -> LLMContext.TaskType.GATHER;
-        };
+        if (title == BotTitle.DEFENDER) {
+            String order = bot.getCurrentOrder();
+            if (BuilderSkill.looksLikeBuild(order)) {
+                return LLMContext.TaskType.BUILD;
+            }
+            return LLMContext.TaskType.COMBAT;
+        }
+        return LLMContext.TaskType.GATHER;
     }
 
     public void broadcastToOwned(Player owner, String message) {

@@ -11,7 +11,7 @@ A cooperative Minecraft session on a **personal offline server**: you are the le
 
 ## Core Features
 ### Inter-Bot Collaboration & Learning
-- Bots discuss needs, delegate tasks, and coordinate (e.g., Builder requests Warrior to guard, Miner to fetch resources).
+- Bots discuss needs, delegate tasks, and coordinate (e.g., a Defender mid-build requests a Gatherer fetch more blocks).
 - Shared memory and learning from each other.
 - Reactive behaviors to world events (destruction, resource shortages).
 
@@ -29,12 +29,12 @@ A cooperative Minecraft session on a **personal offline server**: you are the le
 ## Status (AIBots 1.6.5)
 
 Shipped in monorepo under `AIBotsPlugin/`:
-- Multi-role crew: scavenger, miner, woodsman, hunter, farmer, warrior, protector, builder
+- Two-role crew: **Gatherer** (mining, woodcutting, scavenging, farming, fishing) and **Defender** (building, hunting, guarding/patrol)
 - **Player avatars** (Citizens PLAYER + walkTo, tab list, tools) with villager fallback
 - Learning: teach / share / episodes (`learning.yml`)
 - Multi-LLM: Ollama primary (`qwen2.5:14b` on DadsBox), LM Studio fallback, optional cloud keys
-- Inter-bot messaging: `/crew msg`, material requests from builder
-- Builder primitives: wall / platform / pillar / box
+- Inter-bot messaging: `/crew msg`, material requests from Defenders doing build orders
+- Build primitives: wall / platform / pillar / box
 - **Crew skill interface + job board** (delegation queue)
 - **Storage room register** (`/crew storage register` / pos1–pos2, like `/fill`)
 - **Deposit home** at 64-item armful (`deposit-threshold: 64`) + `/crew deposit` / `/crew inv`
