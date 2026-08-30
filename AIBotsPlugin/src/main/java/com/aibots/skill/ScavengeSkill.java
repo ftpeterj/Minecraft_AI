@@ -322,17 +322,25 @@ public class ScavengeSkill {
             return;
         }
 
-        // Stand next to the resource (never path into the solid log)
-        Location approach = approachNear(target, loc);
+        // Stand next to the resource (never path into the solid log). approachNear()
+        // scores candidates partly by distance from the bot's CURRENT position, so
+        // recomputing it every tick as the bot moves can flip the chosen tile between
+        // two similarly-scored spots — feeding the navigator a different destination
+        // each tick and making the bot visibly oscillate/circle instead of committing
+        // to one path. Stick with the same approach tile for as long as this target
+        // is unchanged; only recompute if we don't have one yet.
+        Location approach = sameTarget(nav, target) ? nav.approach : null;
         if (approach == null) {
-            markSkip(bot, target);
-            nav.targetKey = null;
-            nav.approach = null;
-            return;
+            approach = approachNear(target, loc);
+            if (approach == null) {
+                markSkip(bot, target);
+                nav.targetKey = null;
+                nav.approach = null;
+                return;
+            }
+            nav.targetKey = blockKey(target);
+            nav.approach = approach;
         }
-
-        nav.targetKey = blockKey(target);
-        nav.approach = approach;
 
         double distSq = loc.distanceSquared(approach);
         // Within ~2.5 blocks of approach tile OR close enough to hit the resource
@@ -444,6 +452,10 @@ public class ScavengeSkill {
             nav.stuckTicks = Math.max(0, nav.stuckTicks - 1);
         }
         nav.lastPos = loc.clone();
+    }
+
+    private boolean sameTarget(Nav nav, Block target) {
+        return nav.approach != null && nav.targetKey != null && nav.targetKey.equals(blockKey(target));
     }
 
     private void markSkip(CrewBot bot, Block b) {
