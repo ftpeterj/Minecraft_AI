@@ -158,6 +158,10 @@ titles:
     gather-radius: 28
     farm-radius: 20
     fish-radius: 20
+    # Max logs in one whole-tree harvest (flood-fill through connected trunk blocks).
+    # No separate height limit — a tall trunk is just more logs in the same fill, and
+    # climbing has no cap of its own. Raise this for very large custom trees.
+    tree-harvest-max-blocks: 64
     # Items in bag before walking home to stash (0 = 64, like a player armful). -1 = wait until every slot is used.
     deposit-threshold: 64
     # Wait for an explicit order before working (a Gatherer starting to dig near a

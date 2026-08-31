@@ -44,6 +44,7 @@ public class ScavengeSkill {
     private final MinerTools minerTools;
     private final RailHaulHelper railHaul;
     private final TunnelDigger tunnelDigger;
+    private final TreeHarvester treeHarvester;
     private final Map<UUID, Material> focusMaterial = new ConcurrentHashMap<>();
     private final Map<UUID, OrderFocus> orderFocus = new ConcurrentHashMap<>();
     /** Sticky nav + stuck detection per bot */
@@ -75,6 +76,11 @@ public class ScavengeSkill {
         this.minerTools = new MinerTools(plugin, chests, learning);
         this.railHaul = new RailHaulHelper(plugin, chests);
         this.tunnelDigger = new TunnelDigger(plugin);
+        this.treeHarvester = new TreeHarvester(plugin, npcService, learning, protectedZones);
+    }
+
+    public void clearTreeJob(CrewBot bot) {
+        treeHarvester.clear(bot);
     }
 
     public MinerTools minerTools() {
@@ -208,6 +214,15 @@ public class ScavengeSkill {
 
         updateStuck(nav, loc);
 
+        // An in-progress whole-tree harvest owns the bot's targeting until it finishes
+        // (or aborts) — checked before the normal single-block resolveTarget() so it
+        // can't get reassigned to a different tree's nearest log mid-job.
+        if (treeHarvester.isActive(bot)) {
+            if (treeHarvester.tick(bot, body, null)) {
+                return;
+            }
+        }
+
         Material focus = focusMaterial.get(bot.getId());
         Block target = resolveTarget(bot, loc, radius, focus, nav);
 
@@ -300,6 +315,17 @@ public class ScavengeSkill {
                 }
                 return;
             }
+        }
+
+        // A fresh log target — hand off to whole-tree harvesting (discovers the
+        // connected trunk, harvests it completely, climbs for tall trees, replants
+        // a sapling if one ends up in the bag) instead of breaking just this one
+        // block and letting normal targeting wander to a different tree next tick.
+        if (GatherFocus.isTreeLog(target.getType())) {
+            nav.targetKey = null;
+            nav.approach = null;
+            treeHarvester.tick(bot, body, target);
+            return;
         }
 
         // Soft gate: don't waste time on ore we can't harvest yet

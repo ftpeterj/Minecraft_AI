@@ -142,6 +142,19 @@ public final class GatherFocus {
         };
     }
 
+    /**
+     * Trunk/branch wood only — logs and stems, not leaves/flowers/saplings/mushrooms.
+     * Narrower than {@link #isWoodsmanBlock}; used as the tree flood-fill connectivity
+     * check so it follows the trunk, not the whole plant family.
+     */
+    public static boolean isTreeLog(Material t) {
+        if (t == null) {
+            return false;
+        }
+        String n = t.name();
+        return n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_STEM") || n.endsWith("_HYPHAE");
+    }
+
     /** Trees, leaves, flowers, saplings, mushrooms, etc. */
     public static boolean isWoodsmanBlock(Material t) {
         if (t == null) {

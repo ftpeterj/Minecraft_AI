@@ -23,6 +23,10 @@ public class NpcService {
     private final JavaPlugin plugin;
     private final Logger log;
     private final Map<UUID, NpcHandle> handles = new ConcurrentHashMap<>();
+    /** Bots mid-tree-climb (TreeHarvester) — deliberately airborne beside a trunk with
+     *  no solid ground below, which would otherwise trip the unstick/gravity safety
+     *  net below and yank them straight back to the ground every 2 ticks. */
+    private final java.util.Set<UUID> climbing = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final boolean citizensPresent;
     private final String avatarMode;
     private org.bukkit.scheduler.BukkitTask gravityTask;
@@ -40,8 +44,9 @@ public class NpcService {
 
     /** Drop mid-air crew bodies onto solid ground. */
     private void tickGravity() {
-        for (NpcHandle h : handles.values()) {
-            if (h == null || !h.isValid()) {
+        for (Map.Entry<UUID, NpcHandle> entry : handles.entrySet()) {
+            NpcHandle h = entry.getValue();
+            if (h == null || !h.isValid() || climbing.contains(entry.getKey())) {
                 continue;
             }
             org.bukkit.entity.Entity e = h.getEntity();
@@ -50,6 +55,19 @@ public class NpcService {
                     NpcLocations.applyGravity(e);
                 }
             }
+        }
+    }
+
+    /** TreeHarvester marks a bot climbing while it's deliberately airborne beside a
+     *  trunk, and clears it once back on solid ground. */
+    public void setClimbing(UUID botId, boolean value) {
+        if (botId == null) {
+            return;
+        }
+        if (value) {
+            climbing.add(botId);
+        } else {
+            climbing.remove(botId);
         }
     }
 

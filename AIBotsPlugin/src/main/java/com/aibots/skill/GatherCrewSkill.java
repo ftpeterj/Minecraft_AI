@@ -79,4 +79,11 @@ public final class GatherCrewSkill implements CrewSkill {
     public void tick(CrewBot bot) {
         inner.tick(bot);
     }
+
+    @Override
+    public void onStop(CrewBot bot) {
+        // A bot stopped/dismissed mid-tree-climb must not stay exempt from the
+        // gravity/unstick safety net forever.
+        inner.clearTreeJob(bot);
+    }
 }
