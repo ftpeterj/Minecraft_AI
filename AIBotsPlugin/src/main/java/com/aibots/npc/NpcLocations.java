@@ -4,6 +4,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Openable;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -15,6 +18,48 @@ import org.bukkit.util.Vector;
 public final class NpcLocations {
 
     private NpcLocations() {
+    }
+
+    /**
+     * Open any closed door/trapdoor/fence gate immediately adjacent to the entity's
+     * feet or head. Villager crew bodies have every vanilla AI goal stripped
+     * ({@code VillagerHandle.stripGoals}) to stop wandering/trading/etc — which also
+     * removes whatever goal would otherwise physically open a door as the entity
+     * walks through it. {@code Navigator.setCanOpenDoors(true)} only makes path
+     * planning treat a door as passable; nothing then actually swings it open, so a
+     * goal-stripped villager just walks into a closed door forever. Bots handle it
+     * themselves instead of depending on a goal we deleted. Deliberately narrow
+     * (adjacent blocks only, not a wide radius) so it doesn't fling open every door
+     * in the building as a bot passes through it.
+     */
+    public static void openNearbyDoors(Entity entity) {
+        if (entity == null || !entity.isValid()) {
+            return;
+        }
+        Location loc = entity.getLocation();
+        World world = loc.getWorld();
+        if (world == null) {
+            return;
+        }
+        int fx = loc.getBlockX();
+        int fy = loc.getBlockY();
+        int fz = loc.getBlockZ();
+        BlockFace[] faces = {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST};
+        for (int dy = 0; dy <= 1; dy++) {
+            Block center = world.getBlockAt(fx, fy + dy, fz);
+            openIfClosed(center);
+            for (BlockFace face : faces) {
+                openIfClosed(center.getRelative(face));
+            }
+        }
+    }
+
+    private static void openIfClosed(Block b) {
+        BlockData data = b.getBlockData();
+        if (data instanceof Openable openable && !openable.isOpen()) {
+            openable.setOpen(true);
+            b.setBlockData(openable, false);
+        }
     }
 
     public static double yOffset(JavaPlugin plugin) {

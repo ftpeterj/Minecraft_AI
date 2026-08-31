@@ -51,6 +51,7 @@ public class NpcService {
             }
             org.bukkit.entity.Entity e = h.getEntity();
             if (e != null) {
+                NpcLocations.openNearbyDoors(e);
                 if (!NpcLocations.unstick(e) && !(e instanceof org.bukkit.entity.Player)) {
                     NpcLocations.applyGravity(e);
                 }
