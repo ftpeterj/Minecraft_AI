@@ -743,7 +743,16 @@ public class ScavengeSkill {
         if (b == null) {
             return false;
         }
-        double r = plugin.getConfig().getDouble("crew.storage-keepout", 8.0);
+        // storage-keepout exists to stop mining pits/tunnels from opening up next to
+        // the base — chopping a tree near the house is normal player behavior, not
+        // the thing it was meant to prevent, so wood gets its own (default: no)
+        // keepout instead of inheriting the wider ore/stone radius.
+        double r = GatherFocus.isWoodsmanBlock(b.getType())
+                ? plugin.getConfig().getDouble("crew.storage-keepout-wood", 0.0)
+                : plugin.getConfig().getDouble("crew.storage-keepout", 8.0);
+        if (r <= 0) {
+            return false;
+        }
         Location at = b.getLocation().add(0.5, 0.5, 0.5);
         Location home = bot.getHome();
         if (home != null && home.getWorld() != null && at.getWorld() != null

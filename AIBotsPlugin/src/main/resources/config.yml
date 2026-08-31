@@ -93,8 +93,12 @@ crew:
   walk-speed: 1.05
   # Default work/search radius (blocks). Was effectively capped at 48 before 1.5.7.
   # Change with /crew radius default <n>  or session-only /crew radius <n>
-  # Don't mine/harvest this close to home or registered chests
+  # Don't mine/harvest this close to home or registered chests (ore/stone/sand/etc.)
   storage-keepout: 40
+  # Separate, much smaller (default: none) keepout just for wood — chopping trees
+  # right next to the house is normal, not the mining-pit-next-to-base problem
+  # storage-keepout exists for. Raise this if you want trees near home left alone.
+  storage-keepout-wood: 0
   work-radius: 48
   survey-radius: 48
   far-resource-blocks: 28
