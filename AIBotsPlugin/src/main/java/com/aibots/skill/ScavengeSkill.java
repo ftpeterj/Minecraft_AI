@@ -45,6 +45,7 @@ public class ScavengeSkill {
     private final RailHaulHelper railHaul;
     private final TunnelDigger tunnelDigger;
     private final TreeHarvester treeHarvester;
+    private final com.aibots.npc.CrewPathfinder crewPathfinder;
     private final Map<UUID, Material> focusMaterial = new ConcurrentHashMap<>();
     private final Map<UUID, OrderFocus> orderFocus = new ConcurrentHashMap<>();
     /** Sticky nav + stuck detection per bot */
@@ -77,6 +78,7 @@ public class ScavengeSkill {
         this.railHaul = new RailHaulHelper(plugin, chests);
         this.tunnelDigger = new TunnelDigger(plugin);
         this.treeHarvester = new TreeHarvester(plugin, npcService, learning, protectedZones);
+        this.crewPathfinder = new com.aibots.npc.CrewPathfinder(plugin);
     }
 
     public void clearTreeJob(CrewBot bot) {
@@ -317,11 +319,11 @@ public class ScavengeSkill {
                 // Patrol out from home so we discover new chunks/trees
                 Location roam = roamPoint(home, loc, nav, full);
                 if (roam != null && loc.distanceSquared(roam) > 2.25) {
-                    stepToward(body, roam, nav);
+                    stepToward(bot, body, roam, nav);
                 } else {
                     Location homeFeet = approachNear(home.getBlock(), loc);
                     if (homeFeet != null && loc.distanceSquared(homeFeet) > 4.0) {
-                        stepToward(body, homeFeet, nav);
+                        stepToward(bot, body, homeFeet, nav);
                     } else {
                         body.stopWalking();
                     }
@@ -404,7 +406,7 @@ public class ScavengeSkill {
                 maybeAnnounce(bot, "Can't path to that block — picking another.");
                 return;
             }
-            stepToward(body, approach, nav);
+            stepToward(bot, body, approach, nav);
             return;
         }
 
@@ -544,7 +546,7 @@ public class ScavengeSkill {
             chestApproach = chestLoc.clone().add(0.5, 0, 0.5);
         }
         if (loc.distanceSquared(chestApproach) > 6.0) {
-            stepToward(body, chestApproach, nav);
+            stepToward(bot, body, chestApproach, nav);
             return;
         }
 
@@ -952,10 +954,25 @@ public class ScavengeSkill {
         return NpcLocations.snapToStand(p);
     }
 
-    private void stepToward(NpcHandle body, Location target, Nav nav) {
+    private void stepToward(CrewBot bot, NpcHandle body, Location target, Nav nav) {
         if (body == null || target == null || body.getLocation() == null) {
             return;
         }
+        double speed = plugin.getConfig().getDouble("crew.walk-speed", 1.05);
+
+        // Opt-in custom pathfinder — off by default (crew.pathfinding: vanilla).
+        // Confined to this one call site deliberately: everything that moves a
+        // gatherer around (roam/patrol, approaching a target, walking to deposit)
+        // already funnels through here, so flipping this one config key is the
+        // entire risk surface, with an instant /crew reload revert to vanilla.
+        if ("custom".equalsIgnoreCase(plugin.getConfig().getString("crew.pathfinding", "vanilla"))) {
+            boolean progressing = crewPathfinder.step(bot.getId(), body, body.getLocation(), target, speed);
+            if (!progressing) {
+                crewPathfinder.clear(bot.getId());
+            }
+            return;
+        }
+
         // Cooldown between re-paths for this bot
         if (nav.repathCooldown > 0) {
             nav.repathCooldown--;
@@ -963,7 +980,6 @@ public class ScavengeSkill {
                 return;
             }
         }
-        double speed = plugin.getConfig().getDouble("crew.walk-speed", 1.05);
         boolean started = body.walkTo(target, speed);
         if (started) {
             nav.repathCooldown = 2; // skip next 2 crew ticks if path sticks

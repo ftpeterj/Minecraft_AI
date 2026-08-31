@@ -95,6 +95,15 @@ crew:
   loot-slots: 54
   # Pathfinder walk speed multiplier (keep near 1.0 — high values cause thrash)
   walk-speed: 1.05
+  # "vanilla" (default) = today's Mob.getPathfinder().moveTo() + patches. "custom" =
+  # opt-in grid-based A* (CrewPathfinder) that owns doors/stairs/routing itself —
+  # experimental, test before relying on it. Instant revert via /crew reload.
+  pathfinding: "vanilla"
+  pathfinding-nodes-per-tick: 300
+  pathfinding-max-nodes: 4000
+  # Max single drop the custom pathfinder will route down (bots are invulnerable to
+  # fall damage, so this bounds search space, not safety).
+  pathfinding-max-fall: 3
   # Default work/search radius (blocks). Was effectively capped at 48 before 1.5.7.
   # Change with /crew radius default <n>  or session-only /crew radius <n>
   # Don't mine/harvest this close to home or registered chests (ore/stone/sand/etc.)
