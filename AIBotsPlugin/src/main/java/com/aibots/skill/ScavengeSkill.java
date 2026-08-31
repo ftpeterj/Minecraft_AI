@@ -854,8 +854,12 @@ public class ScavengeSkill {
 
     /**
      * Temporary diagnostic — gate behind crew.debug-nav so it's silent by default.
-     * File logging is broken on the live server (unrelated, pre-existing), so this
-     * reports straight to owner chat instead, throttled to avoid spam.
+     * File logging is broken on the live server (unrelated, pre-existing), and a
+     * direct player.sendMessage() doesn't reach the server console/log either — but
+     * Bukkit.broadcastMessage() shows up as "Chat from '<bot>': ..." in the daemon
+     * log the same way skill status lines (e.g. ScavengeSkill's "heading back to
+     * drop this off") already do, confirmed live. Using that so this is readable via
+     * SSH without needing anything relayed.
      */
     private void debugNav(CrewBot bot, Location loc, Location approach, double distSq,
                           double hitDistSq, boolean walking, int stuckTicks) {
@@ -868,11 +872,7 @@ public class ScavengeSkill {
             return;
         }
         nextDebugNavMs.put(bot.getId(), now + 2000L);
-        org.bukkit.entity.Player owner = bot.getOwnerPlayer();
-        if (owner == null || !owner.isOnline()) {
-            return;
-        }
-        owner.sendMessage(org.bukkit.ChatColor.LIGHT_PURPLE + "[nav] " + bot.getName()
+        org.bukkit.Bukkit.broadcastMessage("§d[nav] " + bot.getName()
                 + " pos=" + fmt(loc) + " approach=" + fmt(approach)
                 + " dist=" + String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(distSq))
                 + " hitDist=" + String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(hitDistSq))
