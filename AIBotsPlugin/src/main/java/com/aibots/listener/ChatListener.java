@@ -3,10 +3,6 @@ package com.aibots.listener;
 import com.aibots.crew.CrewBot;
 import com.aibots.crew.CrewManager;
 import com.aibots.npc.NpcHandle;
-import com.aibots.skill.CombatSkill;
-import com.aibots.skill.FarmerSkill;
-import com.aibots.skill.HunterSkill;
-import com.aibots.skill.ScavengeSkill;
 import com.aibots.storage.ChestNetwork;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -69,22 +65,11 @@ public class ChatListener implements Listener {
                 return;
             }
 
-            boolean workOrder = ScavengeSkill.looksLikeGather(order)
-                    || CombatSkill.looksLikeCombat(order)
-                    || HunterSkill.looksLikeHunt(order)
-                    || FarmerSkill.looksLikeFarm(order);
-            if (workOrder) {
-                java.util.List<String> report = crew.assign(bot, order);
-                if (report != null && !report.isEmpty()) {
-                    for (String line : report) {
-                        player.sendMessage(line);
-                    }
-                    if (bot.getStatus() != com.aibots.crew.BotStatus.BUSY) {
-                        return;
-                    }
-                }
-            }
-            crew.talk(bot, player.getName() + " says: " + order, player);
+            // Real-order detection (gather/farm/fish/build/hunt/combat) now lives
+            // centrally in CrewManager.talk() so /crew say gets the same grounding —
+            // pass the clean order text (no "X says:" prefix, which would otherwise
+            // corrupt order parsing/dispatch) and let it decide.
+            crew.talk(bot, order, player);
         });
     }
 

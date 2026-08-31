@@ -759,6 +759,24 @@ public class CrewManager {
         String playerName = replyTo instanceof Player p ? p.getName() : "someone";
         learning.learnFromPlayerChat(bot, playerName, playerMessage);
 
+        // /crew say (and @mention chat) used to be pure LLM conversation with zero
+        // connection to real game actions — the LLM would cheerfully confirm orders
+        // ("I cooked them and stored it in the network!") that were never actually
+        // dispatched to any skill. If this reads as a real order, dispatch it for
+        // real via the same path /crew assign uses, and report the real (grounded)
+        // result instead of letting the LLM invent one.
+        if (looksLikeRealOrder(bot, playerMessage)) {
+            List<String> report = assign(bot, playerMessage);
+            for (String line : report) {
+                if (replyTo != null) {
+                    replyTo.sendMessage(line);
+                } else {
+                    Bukkit.broadcastMessage(line);
+                }
+            }
+            return;
+        }
+
         String system = RolePrompts.systemPrompt(
                 bot,
                 plugin.getConfig(),
@@ -794,6 +812,26 @@ public class CrewManager {
                     }
                 })
         );
+    }
+
+    /** Conservative "is this actually an order" check — reuses each skill's own
+     *  specific looksLikeX() heuristics (not the permissive adapter-level canHandle()
+     *  catch-alls, which would treat almost any sentence to a Gatherer as an order). */
+    private static boolean looksLikeRealOrder(CrewBot bot, String message) {
+        if (bot.getTitle() == null || message == null || message.isBlank()) {
+            return false;
+        }
+        if (bot.getTitle().isGatherer()) {
+            return ScavengeSkill.looksLikeGather(message)
+                    || FarmerSkill.looksLikeFarm(message)
+                    || FishingSkill.looksLikeFish(message);
+        }
+        if (bot.getTitle() == BotTitle.DEFENDER) {
+            return BuilderSkill.looksLikeBuild(message)
+                    || HunterSkill.looksLikeHunt(message)
+                    || CombatSkill.looksLikeCombat(message);
+        }
+        return false;
     }
 
     private void maybeRelayToTeammate(CrewBot from, String playerMessage, String reply) {
