@@ -63,6 +63,10 @@ items:
   default-max-stack: 99
 
 crew:
+  # Temporary: broadcasts pos/approach/distance/walking-state to chat when a gatherer
+  # is stuck approaching a target (throttled). Off by default — set true and
+  # /crew reload when diagnosing a navigation issue.
+  debug-nav: false
   max-bots-per-player: 6
   # Wipe bots.yml + world crew bodies on every plugin/server load (no ghosts after restart)
   clear-on-load: true

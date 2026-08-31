@@ -372,6 +372,7 @@ public class ScavengeSkill {
         // Within ~2.5 blocks of approach tile OR close enough to hit the resource
         double hitDistSq = loc.distanceSquared(target.getLocation().add(0.5, 0.5, 0.5));
         if (distSq > 6.25 && hitDistSq > 9.0) {
+            debugNav(bot, loc, approach, distSq, hitDistSq, body.isWalking(), nav.stuckTicks);
             // Stuck: nudge then abandon — but never teleport while the real
             // pathfinder is actively following a path. A legitimate door transition
             // (approach, open, step through, close behind) barely moves position for
@@ -847,6 +848,40 @@ public class ScavengeSkill {
     private boolean searchCooldownElapsed(CrewBot bot) {
         Long next = nextTunnelSearchMs.get(bot.getId());
         return next == null || System.currentTimeMillis() >= next;
+    }
+
+    private final Map<UUID, Long> nextDebugNavMs = new ConcurrentHashMap<>();
+
+    /**
+     * Temporary diagnostic — gate behind crew.debug-nav so it's silent by default.
+     * File logging is broken on the live server (unrelated, pre-existing), so this
+     * reports straight to owner chat instead, throttled to avoid spam.
+     */
+    private void debugNav(CrewBot bot, Location loc, Location approach, double distSq,
+                          double hitDistSq, boolean walking, int stuckTicks) {
+        if (!plugin.getConfig().getBoolean("crew.debug-nav", false)) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Long next = nextDebugNavMs.get(bot.getId());
+        if (next != null && now < next) {
+            return;
+        }
+        nextDebugNavMs.put(bot.getId(), now + 2000L);
+        org.bukkit.entity.Player owner = bot.getOwnerPlayer();
+        if (owner == null || !owner.isOnline()) {
+            return;
+        }
+        owner.sendMessage(org.bukkit.ChatColor.LIGHT_PURPLE + "[nav] " + bot.getName()
+                + " pos=" + fmt(loc) + " approach=" + fmt(approach)
+                + " dist=" + String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(distSq))
+                + " hitDist=" + String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(hitDistSq))
+                + " walking=" + walking + " stuck=" + stuckTicks);
+    }
+
+    private static String fmt(Location l) {
+        return l == null ? "null" : String.format(java.util.Locale.ROOT, "%.1f,%.1f,%.1f",
+                l.getX(), l.getY(), l.getZ());
     }
 
     private void maybeAnnounce(CrewBot bot, String msg) {
