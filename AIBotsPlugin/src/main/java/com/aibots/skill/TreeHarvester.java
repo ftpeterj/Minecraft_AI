@@ -68,6 +68,14 @@ public final class TreeHarvester {
         List<Block> remainingLogs;
         Material species;
         Location baseLocation;
+        // Sticky current pick — recomputing "nearest remaining log" fresh every tick
+        // (like recomputing its approach point fresh every tick) let it flip between
+        // two similarly-close logs as the bot's position shifted slightly each tick,
+        // same oscillation bug already found and fixed once in ScavengeSkill's own
+        // targeting. Fixed the same way here: pick once, keep it until harvested.
+        Block currentTarget;
+        Location currentApproach;
+        boolean currentIsClimb;
     }
 
     public TreeHarvester(JavaPlugin plugin, NpcService npcService, LearningService learning,
@@ -127,32 +135,34 @@ public final class TreeHarvester {
             return false;
         }
 
-        Block next = nearestRemaining(job, loc);
+        if (job.currentTarget == null || !job.remainingLogs.contains(job.currentTarget)) {
+            Block next = nearestRemaining(job, loc);
+            job.currentTarget = next;
+            Location approach = approachNear(next, loc);
+            job.currentIsClimb = approach == null;
+            job.currentApproach = job.currentIsClimb ? besideLog(next) : approach;
+        }
+        npcService.setClimbing(bot.getId(), job.currentIsClimb);
 
-        Location approach = approachNear(next, loc);
-        if (approach != null) {
-            // Ground-level reachable — normal walk, no climbing needed.
-            npcService.setClimbing(bot.getId(), false);
-            if (loc.distanceSquared(approach) > 6.25) {
-                body.walkTo(approach, 0.9);
+        if (job.currentIsClimb) {
+            // No ground-level approach — climb beside the trunk itself. Deliberately
+            // airborne with nothing solid below; NpcService.setClimbing() stops the
+            // gravity/unstick safety net from yanking the bot back to the ground.
+            if (loc.distanceSquared(job.currentApproach) > 4.0) {
+                body.teleport(job.currentApproach);
+                body.lookAt(job.currentTarget.getLocation().add(0.5, 0.5, 0.5));
+                return true;
+            }
+        } else {
+            if (loc.distanceSquared(job.currentApproach) > 6.25) {
+                body.walkTo(job.currentApproach, 0.9);
                 return true;
             }
             body.stopWalking();
-            harvest(bot, body, next, job);
-            return true;
         }
-
-        // No ground-level approach — climb beside the trunk itself. Deliberately
-        // airborne with nothing solid below; NpcService.setClimbing() stops the
-        // gravity/unstick safety net from yanking the bot back to the ground.
-        npcService.setClimbing(bot.getId(), true);
-        Location beside = besideLog(next);
-        if (loc.distanceSquared(beside) > 4.0) {
-            body.teleport(beside);
-            body.lookAt(next.getLocation().add(0.5, 0.5, 0.5));
-            return true;
-        }
-        harvest(bot, body, next, job);
+        harvest(bot, body, job.currentTarget, job);
+        job.currentTarget = null;
+        job.currentApproach = null;
         return true;
     }
 
@@ -253,9 +263,11 @@ public final class TreeHarvester {
     }
 
     private void harvest(CrewBot bot, NpcHandle body, Block log, TreeJob job) {
+        ItemStack axe = bestAxe(bot);
         body.lookAt(log.getLocation().add(0.5, 0.5, 0.5));
+        body.equipMainHand(axe);
         body.swingMainHand();
-        for (ItemStack drop : log.getDrops(new ItemStack(Material.IRON_AXE))) {
+        for (ItemStack drop : log.getDrops(axe)) {
             ItemStack left = bot.getLoot().add(drop);
             if (left != null) {
                 log.getWorld().dropItemNaturally(log.getLocation().add(0.5, 0.5, 0.5), left);
@@ -264,6 +276,13 @@ public final class TreeHarvester {
         log.setType(Material.AIR, false);
         job.remainingLogs.remove(log);
         bot.setStatus(BotStatus.BUSY);
+    }
+
+    /** Whatever axe the bot is actually carrying, not a hardcoded stand-in — so a
+     *  netherite axe someone hands the bot actually gets held and used. */
+    private ItemStack bestAxe(CrewBot bot) {
+        ItemStack axe = bot.getLoot().findFirst(i -> i.getType().name().endsWith("_AXE"));
+        return axe != null ? axe : new ItemStack(Material.IRON_AXE);
     }
 
     private void finish(CrewBot bot, TreeJob job) {
