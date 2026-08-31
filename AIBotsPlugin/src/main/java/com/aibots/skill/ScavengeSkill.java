@@ -301,6 +301,19 @@ public class ScavengeSkill {
                         + " — walking around home. "
                         + "Try /crew radius " + Math.min(full + 32, radiusService.hardMax())
                         + " or move me nearer resources. /crew stop " + bot.getName() + " to halt.");
+                // updateStuck() already tracks nav.stuckTicks every tick regardless of
+                // branch — this roam/patrol path just never checked it before, so a
+                // roam point that requires the vanilla pathfinder to route somewhere
+                // it can't cleanly get back from (e.g. up stairs onto a landing) had
+                // no escape at all, unlike the target-approach path below.
+                if (nav.stuckTicks >= 8) {
+                    debugNav(bot, loc, nav.approach, 0, 0, body.isWalking(), nav.stuckTicks);
+                    nav.stuckTicks = 0;
+                    nav.approach = null;
+                    body.stopWalking();
+                    maybeAnnounce(bot, "Stuck patrolling — trying a different direction.");
+                    return;
+                }
                 // Patrol out from home so we discover new chunks/trees
                 Location roam = roamPoint(home, loc, nav, full);
                 if (roam != null && loc.distanceSquared(roam) > 2.25) {
