@@ -18,7 +18,7 @@ creative:
   plugins: /home/minecraft/multicraft/servers/Creative/plugins
   aibots_data: /home/minecraft/multicraft/servers/Creative/plugins/AIBots
   jar_glob: AIBots-*-SNAPSHOT.jar
-  paper_jar: paper-26.1.2-69.jar
+  paper_jar: paper-26.2-121.jar
 
 ollama:
   base_url: http://dadsbox.local:11434

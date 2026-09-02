@@ -1,0 +1,4 @@
+# Player-account names that count as "bots" for right-click-to-open-inventory
+# and /botstatus. Match is case-insensitive.
+bot-accounts:
+  - bloodypuddlekos

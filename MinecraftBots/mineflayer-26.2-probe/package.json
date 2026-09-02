@@ -1,0 +1,17 @@
+{
+  "name": "mineflayer-26.2-probe",
+  "private": true,
+  "description": "Unofficial Mineflayer join probe against Paper 26.2 (protocol 776)",
+  "type": "commonjs",
+  "scripts": {
+    "patch": "node patch-mcdata-26.2.js",
+    "join": "node join.js",
+    "postinstall": "node patch-mcdata-26.2.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "mineflayer": "^4.38.0"
+  }
+}

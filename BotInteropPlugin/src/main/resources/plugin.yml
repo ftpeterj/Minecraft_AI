@@ -1,0 +1,20 @@
+name: BotInterop
+version: '1.0.0'
+description: Right-click a bot account to open its live inventory; check its health/hunger on demand
+main: com.botinterop.BotInteropPlugin
+api-version: '1.21'
+author: ftpeterj
+
+commands:
+  botstatus:
+    description: Show a bot account's health, hunger, and location
+    usage: /botstatus <name>
+    permission: botinterop.status
+
+permissions:
+  botinterop.use:
+    description: Right-click a bot account to open its live inventory
+    default: true
+  botinterop.status:
+    description: Check a bot account's health/hunger via /botstatus
+    default: true

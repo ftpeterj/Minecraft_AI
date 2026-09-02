@@ -8,9 +8,9 @@ You and Grok take turns on this repo so tokens last. **Pull before you start. Pu
 
 ## What this is
 
-A cooperative Minecraft session on a **personal Paper server**. The human is the leader. AI crew look and act like other players, take useful work, and always defer. No extra Minecraft accounts.
+A cooperative Minecraft session on a **personal Paper server**. The human is the leader. AI crew look and act like other players, take useful work, and always defer.
 
-Plugin: `AIBotsPlugin/` (Paper, Java 21, Maven). Live version **1.6.5**.
+**Primary direction as of 2026-09-02: mineflayer AI bot.** The bots are moving to real, purchased Java Edition player accounts driven by Node.js/mineflayer (`MinecraftBots/mineflayer-26.2-probe/`), not Citizens NPCs. The owner considers most of the prior Citizens/AIBotsPlugin villager-avatar work a failure — see "Mineflayer bot (current direction)" below. `AIBotsPlugin/` (Paper, Java 21, Maven, live version **1.6.5**) still runs live on Creative but is legacy; default new bot-presence work to the mineflayer path unless told otherwise.
 
 ## Do not
 
@@ -42,7 +42,7 @@ LAN SSH inventory for other boxes: `~/.claude/skills/remote-troubleshoot/hosts.y
 - World: `/home/minecraft/multicraft/servers/Creative/`
 - Plugins: `.../Creative/plugins/`
 - AIBots data: `.../Creative/plugins/AIBots/` (`config.yml`, `bots.yml`, `learning.yml`, `storage.yml`)
-- Paper: `paper-26.1.2-69.jar` (API 1.21). Also Citizens `2.0.42-b4187`.
+- Paper: `paper-26.2-121.jar` (Minecraft 26.2, latest stable as of 2026-09-02). Also Citizens `2.0.43-b4239`. Previous: `paper-26.1.2-69.jar`. World backup at `/home/minecraft/backups/Creative-world-pre-26.2-20260902-0104.tgz`.
 - Game port 25565, RCON 25577, `enable-rcon=true`
 - `online-mode` is currently **true** on disk (SETUP.md still describes offline-mode). Check before changing it.
 - Plugin data files are `xxadmin:mc4`. If `config.yml` is not group-readable, mc4 cannot load LLM URLs.
@@ -70,14 +70,16 @@ Read `PASSWORD` from `C:\Projects\ops.local.yml`. Never echo it into git, README
 ## Repo layout (what belongs here)
 
 ```text
-AIBotsPlugin/     Paper plugin — this is the product
-docs/             ROADMAP.md, STORAGE.md
-SETUP.md          Human setup
-CLAUDE.md         This file
+AIBotsPlugin/       Paper plugin (Citizens/villager crew) — legacy, still live on Creative
+BotInteropPlugin/   Paper plugin — right-click a mineflayer bot account for its live inventory, /botstatus
+MinecraftBots/       mineflayer-26.2-probe/ (the mineflayer bot), plus misc ops scripts
+docs/               ROADMAP.md, STORAGE.md
+SETUP.md            Human setup
+CLAUDE.md           This file
 ops.local.yml.example
 ```
 
-`MinecraftBots/` and `LLM-craft/` are optional related trees. **`pihole/` and `cryptobot/` are local-only — never add them.**
+`LLM-craft/` is an optional related tree. **`pihole/` and `cryptobot/` are local-only — never add them.**
 
 ## Product constraints
 
@@ -105,7 +107,16 @@ Titles: gatherer (mining, woodcutting, scavenging, farming, fishing), defender (
 
 Shipped in 1.6.5: Ollama primary, deposit-to-home, storage keepout, unstick, nearby tree heal, co-op prompts, idle liveliness (wander/look/emote when idle), per-bot skin pool, villager-body collision fix, gatherer/defender title merge + new fishing skill.
 
-**Avatar mode is back on `villager`** (not `player`/Citizens) — Citizens `PLAYER`-type NPCs render with corrupted/warped body geometry on this server's Minecraft version even after upgrading Citizens and fixing a teleport-vs-rotation bug in our own code; root cause looks upstream (Citizens + this MC version), not fixed. **Mineflayer was investigated as a real-player-character alternative and is blocked**: it doesn't yet support this server's exact Minecraft version (26.1.2) — see PrismarineJS/mineflayer issue #3893 (open as of 2026-04-22). Revisit both once either gets upstream support.
+**Avatar mode is back on `villager`** (not `player`/Citizens) — Citizens `PLAYER`-type NPCs render with corrupted/warped body geometry on this server's Minecraft version even after upgrading Citizens and fixing a teleport-vs-rotation bug in our own code. **Update 2026-09-02: the owner traced this to the client-side Iris shader pack**, not an upstream Citizens/MC-version bug as previously assumed — worth retesting Citizens `PLAYER` mode without Iris before ruling it out again. Regardless, the project has pivoted to the mineflayer path below rather than continuing to chase Citizens.
+
+**Mineflayer bot (current direction).** Mineflayer doesn't officially support this server's Minecraft version (26.2, protocol 776 — PrismarineJS/mineflayer only documents through 26.1) but an unofficial patch works:
+
+- `MinecraftBots/mineflayer-26.2-probe/` — mineflayer `4.38.0`, patched via `patch-mcdata-26.2.js` (runs as npm `postinstall`): clones `minecraft-data` 26.1→26.2 and aliases `prismarine-chunk`/`prismarine-physics` 26.2→1.18. Confirmed working end-to-end (login/spawn/chat/block-read) against both Creative and Survival.
+- `persistent-bot.js` in that folder — connects and stays connected indefinitely with exponential-backoff auto-reconnect. No AI behavior yet, intentionally minimal.
+- Bot account: **`bloodypuddlekos`**, a real purchased Java Edition Microsoft account, whitelisted on Survival. Never use the owner's own account for a bot — logging a bot in on an account that's already online kicks that live session ("logged in from another location").
+- `C:\Projects\BotInteropPlugin\` — standalone Paper plugin (pattern-matches `JoinGatePlugin/`, independent of `AIBotsPlugin/`). Since the bot is a real online player, right-clicking a configured bot account opens its **live** `PlayerInventory` for the clicking player to edit directly (the `/invsee` trick) — real equip/give/take, no sync layer. Also adds `/botstatus <name>` for health/hunger/location on demand. Config: `BotInteropPlugin/src/main/resources/config.yml` → `bot-accounts`. Deployed to Survival 2026-09-02.
+- Survival specifics: RCON port **25575** (Creative is 25577, same password in `ops.local.yml`). Survival's Paper process runs as OS user `mc5` (Creative is `mc4`) — `xxadmin` can't write directly to `survival/plugins/`; deploy via `scp` to `/tmp` then `sudo mv` + `sudo chown mc5:mc5`.
+- Auth gotcha: prismarine-auth caches Microsoft tokens at `%APPDATA%\.minecraft\nmp-cache\<hash>_*-cache.json`, hashed from the exact (case-sensitive) username string. A failed auth attempt still writes a cache file that gets silently reused on retry, producing a different and more confusing error later (`Profile not found, please restart your launcher...`) even after the real problem is fixed. Clear the relevant cache files and force a fresh device-code sign-in after any auth failure rather than just retrying.
 
 Not done: idle initiative that still defers to the player (Slice 3, though idle liveliness now covers the cosmetic half), world event bus, builder shopping-list → job board, hybrid local-then-cloud LLM.
 
