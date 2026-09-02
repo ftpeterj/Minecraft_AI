@@ -1,0 +1,20 @@
+name: JoinGate
+version: '1.0.0'
+description: Alerts ops in-game and in console when a non-whitelisted player tries to join, and lets you /approve them on the spot
+main: com.joingate.JoinGatePlugin
+api-version: '1.21'
+author: ftpeterj
+
+commands:
+  approve:
+    description: Whitelist a player who just tried to join
+    usage: /approve <playername>
+    permission: joingate.approve
+
+permissions:
+  joingate.notify:
+    description: Receive in-game alerts about blocked join attempts
+    default: op
+  joingate.approve:
+    description: Whitelist a player via /approve
+    default: op
