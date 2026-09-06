@@ -42,6 +42,9 @@ function destinationFor (itemName, forceOffhand) {
   if (itemName.endsWith('_chestplate') || itemName === 'elytra') return 'torso'
   if (itemName.endsWith('_leggings')) return 'legs'
   if (itemName.endsWith('_boots')) return 'feet'
+  if (itemName === 'shield') return 'off-hand'
+  // Everything else — swords, axes, pickaxes, shovels, hoes, bows, crossbows,
+  // tridents, or anything unrecognized — goes in the primary (main) hand.
   return 'hand'
 }
 
