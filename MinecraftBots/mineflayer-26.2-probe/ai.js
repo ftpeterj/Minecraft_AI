@@ -53,7 +53,16 @@ the Minecraft Wiki rather than guessing — then answer using what it tells you.
 You never decide on your own who to trust. If someone asks to be friends, asks you to trust them,
 or asks why you won't do something for them, call request_friendship — never say yes yourself and
 never claim you're already friends unless a tool result told you so.
+Your current position and dimension are given to you before each message — use that when asked
+where you are, never guess or make up coordinates.
 Always reply only in English, using only standard Latin letters — never any other script.`
+
+/** Built fresh on every call so it reflects the bot's live position, not a stale snapshot. */
+function locationContext (bot) {
+  const p = bot.entity?.position
+  if (!p) return 'Your current position is unknown right now (not fully spawned into the world yet).'
+  return `Your current position is x=${p.x.toFixed(1)}, y=${p.y.toFixed(1)}, z=${p.z.toFixed(1)}, dimension=${bot.game?.dimension || 'unknown'}.`
+}
 
 /** Defensive filter: strip any stray non-Latin-script characters (a known qwen2.5 quirk — it occasionally leaks CJK text) before a reply reaches chat. */
 function stripNonLatinScript (text) {
@@ -158,7 +167,7 @@ async function wikiLookup (topic) {
   return page?.extract ? { title, extract: page.extract } : null
 }
 
-async function ollamaChat (sender, message) {
+async function ollamaChat (bot, sender, message) {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -167,6 +176,7 @@ async function ollamaChat (sender, message) {
       stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: locationContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` }
       ],
       tools: TOOLS,
@@ -179,7 +189,7 @@ async function ollamaChat (sender, message) {
 }
 
 /** Sends a tool's result back to the model so it can phrase a natural reply, rather than pasting raw data into chat. */
-async function ollamaChatWithToolResult (sender, message, assistantMessage, toolResultContent) {
+async function ollamaChatWithToolResult (bot, sender, message, assistantMessage, toolResultContent) {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -188,6 +198,7 @@ async function ollamaChatWithToolResult (sender, message, assistantMessage, tool
       stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: locationContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` },
         assistantMessage,
         { role: 'tool', content: toolResultContent }
@@ -354,7 +365,7 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
 
   let assistantMessage
   try {
-    assistantMessage = await ollamaChat(sender, message)
+    assistantMessage = await ollamaChat(bot, sender, message)
   } catch (err) {
     reply("(brain's not responding right now)")
     console.log(`[ai] ollama error: ${err.stack || err}`)
@@ -381,7 +392,7 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
       resultText = 'wiki lookup failed'
     }
     try {
-      const finalReply = await ollamaChatWithToolResult(sender, message, assistantMessage, resultText)
+      const finalReply = await ollamaChatWithToolResult(bot, sender, message, assistantMessage, resultText)
       reply(stripNonLatinScript(finalReply || resultText))
     } catch (err) {
       console.log(`[ai] wiki lookup error: ${err.stack || err}`)
