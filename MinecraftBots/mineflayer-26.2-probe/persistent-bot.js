@@ -109,16 +109,26 @@ function handleDurabilityCommand (reply) {
   reply(lines.length ? lines.join(', ') : 'nothing worn/held with durability')
 }
 
-/** Returns the message with the leading name stripped, if it starts with the bot's username or a configured nickname; otherwise null. */
+function escapeRegExp (s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Returns the message to hand off if it's addressed to the bot by name/nickname
+ * anywhere ("bpk equip axe" or "hello bpk" both count), or null if not addressed.
+ * A leading name is stripped (command-style); a name elsewhere in the message
+ * is left in place (just used to detect it's addressed to the bot at all).
+ */
 function stripAddressedPrefix (message) {
   const lower = message.toLowerCase()
-  for (const name of [bot.username.toLowerCase(), ...NICKNAMES]) {
-    const prefix = name + ' '
-    if (lower.startsWith(prefix)) {
-      return message.slice(prefix.length)
+  const names = [bot.username.toLowerCase(), ...NICKNAMES]
+  for (const name of names) {
+    if (lower.startsWith(name + ' ')) {
+      return message.slice(name.length + 1)
     }
   }
-  return null
+  const mentioned = names.some((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`, 'i').test(message))
+  return mentioned ? message : null
 }
 
 function handleChatLine (username, message, reply) {
