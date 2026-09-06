@@ -1,0 +1,6 @@
+name: StackSize99
+version: '1.0.0'
+description: Overrides normally-64-max items to stack to 99
+main: com.stacksize99.StackSize99Plugin
+api-version: '1.21'
+author: ftpeterj

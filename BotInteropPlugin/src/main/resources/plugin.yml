@@ -10,10 +10,18 @@ commands:
     description: Show a bot account's health, hunger, and location
     usage: /botstatus <name>
     permission: botinterop.status
+  botinv:
+    description: Open a bot account's main inventory from anywhere
+    usage: /botinv <name>
+    permission: botinterop.use
+  botarmor:
+    description: Open a bot account's armor + offhand slots from anywhere
+    usage: /botarmor <name>
+    permission: botinterop.use
 
 permissions:
   botinterop.use:
-    description: Right-click a bot account to open its live inventory
+    description: Right-click a bot account (or /botinv) to open its live inventory
     default: true
   botinterop.status:
     description: Check a bot account's health/hunger via /botstatus

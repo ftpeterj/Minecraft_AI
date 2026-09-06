@@ -32,6 +32,63 @@ function log (msg) {
   console.log(`[${stamp()}] ${msg}`)
 }
 
+function destinationFor (itemName, forceOffhand) {
+  if (forceOffhand) return 'off-hand'
+  if (itemName.endsWith('_helmet') || itemName === 'turtle_helmet') return 'head'
+  if (itemName.endsWith('_chestplate') || itemName === 'elytra') return 'torso'
+  if (itemName.endsWith('_leggings')) return 'legs'
+  if (itemName.endsWith('_boots')) return 'feet'
+  return 'hand'
+}
+
+function findItem (inventory, query) {
+  const q = query.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  const items = inventory.items()
+  return (
+    items.find((i) => i.name === q) ||
+    items.find((i) => i.name.includes(q)) ||
+    items.find((i) => i.displayName?.toLowerCase().includes(query.trim().toLowerCase()))
+  )
+}
+
+async function handleEquipCommand (args, reply) {
+  let words = args.slice()
+  let forceOffhand = false
+  const last = words[words.length - 1]?.toLowerCase()
+  if (last === 'offhand' || last === 'off-hand') {
+    forceOffhand = true
+    words = words.slice(0, -1)
+  }
+  const query = words.join(' ')
+  if (!query) {
+    reply('usage: equip <item name> [offhand]')
+    return
+  }
+
+  const item = findItem(bot.inventory, query)
+  if (!item) {
+    const have = bot.inventory.items().map((i) => i.name).join(', ') || '(empty)'
+    reply(`no "${query}" in inventory. Have: ${have}`)
+    return
+  }
+
+  const destination = destinationFor(item.name, forceOffhand)
+  try {
+    await bot.equip(item.type, destination)
+    reply(`equipped ${item.displayName || item.name} (${destination})`)
+  } catch (err) {
+    reply(`couldn't equip ${item.displayName || item.name}: ${err.message}`)
+  }
+}
+
+function handleChatLine (username, message, reply) {
+  if (username === bot.username) return
+  const parts = message.trim().split(/\s+/)
+  if (parts[0]?.toLowerCase() === 'equip') {
+    handleEquipCommand(parts.slice(1), reply).catch((err) => log(`equip handler error: ${err.stack || err}`))
+  }
+}
+
 function scheduleReconnect (reason) {
   if (shuttingDown) return
   log(`reconnecting in ${Math.round(reconnectDelay / 1000)}s (${reason})`)
@@ -59,6 +116,17 @@ function connect () {
     reconnectDelay = MIN_RECONNECT_MS
     const p = bot.entity?.position
     log(`SPAWN at ${p?.x?.toFixed?.(1)},${p?.y?.toFixed?.(1)},${p?.z?.toFixed?.(1)} gameMode=${bot.game?.gameMode} dim=${bot.game?.dimension}`)
+  })
+
+  bot.on('whisper', (username, message) => {
+    handleChatLine(username, message, (msg) => bot.whisper(username, msg))
+  })
+
+  bot.on('chat', (username, message) => {
+    const prefix = bot.username.toLowerCase() + ' '
+    if (message.toLowerCase().startsWith(prefix)) {
+      handleChatLine(username, message.slice(prefix.length), (msg) => bot.chat(msg))
+    }
   })
 
   bot.on('kicked', (reason) => {
