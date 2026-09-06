@@ -1,0 +1,24 @@
+name: Bags
+version: '1.0.0'
+description: Portable 54-slot bag items, opened by right-clicking them in your own inventory
+main: com.bags.BagsPlugin
+api-version: '1.21'
+author: ftpeterj
+
+commands:
+  bag:
+    description: Open a bag from your inventory (backup for right-clicking it directly)
+    usage: /bag
+    permission: bags.use
+  givebag:
+    description: Give a player a new empty bag
+    usage: /givebag <player>
+    permission: bags.give
+
+permissions:
+  bags.use:
+    description: Open a bag you're carrying
+    default: true
+  bags.give:
+    description: Create/give bags to players
+    default: op
