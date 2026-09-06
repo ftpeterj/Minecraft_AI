@@ -61,6 +61,6 @@ final class BotGui {
         holder.loadCatalog();
 
         viewer.openInventory(gui);
-        viewer.sendMessage("§7Top row: click an item to mark it as wanted. Bottom row: place what you're offering. Close when done.");
+        viewer.sendMessage("§9Top row: click an item to mark it as wanted. Bottom row: place what you're offering. Close when done.");
     }
 }

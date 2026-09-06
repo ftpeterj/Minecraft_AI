@@ -95,7 +95,7 @@ public class BotInventoryListener implements Listener {
         if (top.getHolder() instanceof BotTradeHolder trade && clickedTop && BotTradeHolder.isCatalogSlot(rawSlot)) {
             event.setCancelled(true);
             trade.registerWant(rawSlot);
-            event.getWhoClicked().sendMessage("§7Marked as wanted. Close the window when your offer is ready.");
+            event.getWhoClicked().sendMessage("§9Marked as wanted. Close the window when your offer is ready.");
             return;
         }
 

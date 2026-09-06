@@ -57,9 +57,13 @@ public class BotTradeHolder implements InventoryHolder {
     }
 
     public void loadCatalog() {
+        // Read slots 0-35 one at a time rather than via getContents() — bulk
+        // inventory-array reads/writes have behaved unpredictably on this
+        // build before (see BotInventoryHolder's setContents() note); this
+        // is the same per-slot pattern already proven safe for writes.
         int slot = 0;
-        for (ItemStack item : target.getInventory().getContents()) {
-            if (slot >= CATALOG_END) break;
+        for (int i = 0; i < 36 && slot < CATALOG_END; i++) {
+            ItemStack item = target.getInventory().getItem(i);
             if (item != null && !item.getType().isAir()) {
                 ItemStack display = item.clone();
                 display.setAmount(1);

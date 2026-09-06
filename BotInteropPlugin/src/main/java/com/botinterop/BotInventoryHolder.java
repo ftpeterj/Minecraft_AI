@@ -46,11 +46,16 @@ public class BotInventoryHolder implements InventoryHolder {
         return target;
     }
 
-    /** Populates the GUI from the bot's current real inventory. */
+    /**
+     * Populates the GUI from the bot's current real inventory. Reads slots
+     * one at a time rather than via getContents() — bulk inventory-array
+     * reads/writes have behaved unpredictably on this build (see
+     * syncToTarget()'s note on setContents() wiping armor); this mirrors the
+     * same per-slot pattern already proven safe there.
+     */
     public void loadFromTarget() {
-        ItemStack[] contents = target.getInventory().getContents();
         for (int i = 0; i < SIZE; i++) {
-            inventory.setItem(i, i < contents.length ? contents[i] : null);
+            inventory.setItem(i, target.getInventory().getItem(i));
         }
     }
 

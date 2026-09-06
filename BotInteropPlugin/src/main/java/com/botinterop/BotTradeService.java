@@ -98,7 +98,7 @@ public class BotTradeService {
             for (ItemStack item : p.offer) {
                 p.requester.getInventory().addItem(item);
             }
-            p.requester.sendMessage("§7[BotInterop] Your trade offer was declined; items returned.");
+            p.requester.sendMessage("§9[BotInterop] Your trade offer was declined; items returned.");
         } else {
             Bukkit.getLogger().warning("[BotInterop] " + p.requester.getName() + " went offline before their trade offer could be returned — items lost.");
         }
