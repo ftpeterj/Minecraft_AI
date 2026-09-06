@@ -53,15 +53,34 @@ the Minecraft Wiki rather than guessing — then answer using what it tells you.
 You never decide on your own who to trust. If someone asks to be friends, asks you to trust them,
 or asks why you won't do something for them, call request_friendship — never say yes yourself and
 never claim you're already friends unless a tool result told you so.
-Your current position and dimension are given to you before each message — use that when asked
-where you are, never guess or make up coordinates.
+Your current position, health/hunger, held item, and inventory are given to you before each
+message — use that when asked where you are, whether you're hurt, or what you're carrying. Never
+guess or make up any of it.
 Always reply only in English, using only standard Latin letters — never any other script.`
 
-/** Built fresh on every call so it reflects the bot's live position, not a stale snapshot. */
-function locationContext (bot) {
+/**
+ * Built fresh on every call so it reflects the bot's live state, not a stale
+ * snapshot — same reasoning as the position fix: without this, the model has
+ * no real data for "what do you have"/"are you hurt" and just hallucinates.
+ */
+function selfContext (bot) {
   const p = bot.entity?.position
-  if (!p) return 'Your current position is unknown right now (not fully spawned into the world yet).'
-  return `Your current position is x=${p.x.toFixed(1)}, y=${p.y.toFixed(1)}, z=${p.z.toFixed(1)}, dimension=${bot.game?.dimension || 'unknown'}.`
+  const location = p
+    ? `Position: x=${p.x.toFixed(1)}, y=${p.y.toFixed(1)}, z=${p.z.toFixed(1)}, dimension=${bot.game?.dimension || 'unknown'}.`
+    : 'Position: unknown right now (not fully spawned into the world yet).'
+
+  const statusParts = []
+  if (typeof bot.health === 'number') statusParts.push(`health=${bot.health.toFixed(1)}/20`)
+  if (typeof bot.food === 'number') statusParts.push(`hunger=${bot.food}/20`)
+  statusParts.push(`holding=${bot.heldItem ? (bot.heldItem.displayName || bot.heldItem.name) : 'nothing'}`)
+  const status = `Status: ${statusParts.join(', ')}.`
+
+  const items = bot.inventory?.items() || []
+  const inventory = items.length
+    ? `Inventory: ${items.map((i) => `${i.count}x ${i.displayName || i.name}`).join(', ')}.`
+    : 'Inventory: empty.'
+
+  return `${location}\n${status}\n${inventory}`
 }
 
 /** Defensive filter: strip any stray non-Latin-script characters (a known qwen2.5 quirk — it occasionally leaks CJK text) before a reply reaches chat. */
@@ -176,7 +195,7 @@ async function ollamaChat (bot, sender, message) {
       stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'system', content: locationContext(bot) },
+        { role: 'system', content: selfContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` }
       ],
       tools: TOOLS,
@@ -198,7 +217,7 @@ async function ollamaChatWithToolResult (bot, sender, message, assistantMessage,
       stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'system', content: locationContext(bot) },
+        { role: 'system', content: selfContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` },
         assistantMessage,
         { role: 'tool', content: toolResultContent }
