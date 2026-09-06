@@ -263,9 +263,60 @@ function findItem (inventory, query) {
   )
 }
 
-function findFoodItem (bot) {
+/**
+ * Ground-truth inventory workaround: this server's real Minecraft version
+ * (26.2) doesn't have official mineflayer support, so the patch this bot
+ * runs on clones minecraft-data from 26.1 and relabels it as 26.2. Real
+ * 26.2's actual item registry doesn't match that patched table 1:1, so
+ * mineflayer's own item-id decoding silently resolves items to the WRONG
+ * name (confirmed live: a real cooked porkchop showed up client-side as an
+ * "iron sword"). `bot.inventory.slots[]` still holds the real underlying
+ * item object at the right protocol slot — only its `.name`/`.type` label
+ * is wrong — so this sidesteps the bug by asking the SERVER (via BotInterop's
+ * `/botinv <self> list`, read via Bukkit, immune to this client-side issue)
+ * which Bukkit slot has real food, then grabs whatever object mineflayer has
+ * sitting at the matching protocol slot — never trusting its name.
+ */
+function stripColorCodes (text) {
+  return text.replace(/§./g, '')
+}
+
+function queryOwnInventoryText (bot, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const lines = []
+    const onMessage = (jsonMsg) => {
+      lines.push(stripColorCodes(jsonMsg.toString()))
+    }
+    bot.on('message', onMessage)
+    bot.chat(`/botinv ${bot.username} list`)
+    setTimeout(() => {
+      bot.removeListener('message', onMessage)
+      resolve(lines)
+    }, timeoutMs)
+  })
+}
+
+function bukkitMainSlotToProtocolSlot (bukkitSlot) {
+  if (bukkitSlot >= 0 && bukkitSlot <= 8) return 36 + bukkitSlot // hotbar
+  if (bukkitSlot >= 9 && bukkitSlot <= 35) return bukkitSlot // main inventory (same numbering)
+  return null
+}
+
+/** Returns { item, realName } — `item` is only safe to use as an opaque handle for equip/consume; its own .name/.displayName are not trustworthy (see note above), so realName (from the server-verified listing) is what to show the player. */
+async function findFoodItem (bot) {
   const foodNames = new Set((bot.registry?.foodsArray || []).map((f) => f.name))
-  return bot.inventory.items().find((i) => foodNames.has(i.name))
+  const lines = await queryOwnInventoryText(bot)
+  for (const line of lines) {
+    const match = line.match(/^\s*slot (\d+): (\d+)x (.+)$/)
+    if (!match) continue
+    const realName = match[3].trim()
+    const normalizedName = realName.toLowerCase().replace(/\s+/g, '_')
+    if (!foodNames.has(normalizedName)) continue
+    const protocolSlot = bukkitMainSlotToProtocolSlot(Number(match[1]))
+    const item = protocolSlot != null ? bot.inventory.slots[protocolSlot] : null
+    if (item) return { item, realName }
+  }
+  return null
 }
 
 async function eatFood (bot, food) {
@@ -302,11 +353,11 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'eat': {
-      const food = findFoodItem(bot)
-      if (!food) { reply("I don't have any food on me"); return }
+      const found = await findFoodItem(bot)
+      if (!found) { reply("I don't have any food on me"); return }
       try {
-        await eatFood(bot, food)
-        reply(`ate ${food.displayName || food.name}`)
+        await eatFood(bot, found.item)
+        reply(`ate ${found.realName}`)
       } catch (err) {
         reply(`couldn't eat: ${err.message}`)
       }
@@ -483,17 +534,18 @@ async function maybeEatOrAlert (bot, notifyOwner) {
   if (autoEating) return
   if (typeof bot.food !== 'number' || bot.food > AUTO_EAT_THRESHOLD) return
 
-  const food = findFoodItem(bot)
-  if (food) {
-    autoEating = true
-    try {
-      await eatFood(bot, food)
-    } catch (err) {
-      console.log(`[ai] auto-eat error: ${err.stack || err}`)
-    } finally {
-      autoEating = false
+  autoEating = true
+  try {
+    const found = await findFoodItem(bot)
+    if (found) {
+      await eatFood(bot, found.item)
+      return
     }
+  } catch (err) {
+    console.log(`[ai] auto-eat error: ${err.stack || err}`)
     return
+  } finally {
+    autoEating = false
   }
 
   if (bot.food > LOW_FOOD_ALERT_THRESHOLD) return
