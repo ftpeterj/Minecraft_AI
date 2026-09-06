@@ -44,6 +44,16 @@ function isTrusted (name) {
   return n === OWNER || friends.has(n)
 }
 
+// Proactive self-care: eats on its own once hungry rather than waiting to be
+// told, same as a real player would. Only alerts the owner once it's both
+// genuinely hungry AND has nothing left to eat — not on every tick, and not
+// just for being below max food (that'd fire constantly under normal play).
+const AUTO_EAT_THRESHOLD = 14
+const LOW_FOOD_ALERT_THRESHOLD = 6
+const LOW_FOOD_ALERT_COOLDOWN_MS = 5 * 60 * 1000
+let autoEating = false
+let lastLowFoodAlert = 0
+
 const SYSTEM_PROMPT = `You are a helpful Minecraft player-character bot on a survival server.
 Keep replies short and in-character, like a fellow player chatting, not an assistant.
 If someone asks you to do something you have a tool for, call that tool. Otherwise just reply in chat.
@@ -114,6 +124,14 @@ const TOOLS = [
     function: {
       name: 'stop',
       description: 'Stop moving/following and stand still.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'eat',
+      description: 'Eat food from your inventory to restore hunger.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
@@ -245,6 +263,16 @@ function findItem (inventory, query) {
   )
 }
 
+function findFoodItem (bot) {
+  const foodNames = new Set((bot.registry?.foodsArray || []).map((f) => f.name))
+  return bot.inventory.items().find((i) => foodNames.has(i.name))
+}
+
+async function eatFood (bot, food) {
+  await bot.equip(food, 'hand')
+  await bot.consume()
+}
+
 /** bot.players[name].entity can lag/stay unset even when the player is genuinely nearby — fall back to scanning bot.entities directly. */
 function findPlayerEntity (bot, username) {
   const viaPlayers = bot.players[username]?.entity
@@ -271,6 +299,17 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
     case 'stop': {
       bot.pathfinder.setGoal(null)
       reply('stopping')
+      return
+    }
+    case 'eat': {
+      const food = findFoodItem(bot)
+      if (!food) { reply("I don't have any food on me"); return }
+      try {
+        await eatFood(bot, food)
+        reply(`ate ${food.displayName || food.name}`)
+      } catch (err) {
+        reply(`couldn't eat: ${err.message}`)
+      }
       return
     }
     case 'equip_item': {
@@ -440,4 +479,35 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
   ownerReplyFn(`${sender} asked me to: ${describeCall(toolName, toolArgs)}. Reply "approve ${sender}" or "deny ${sender}".`)
 }
 
-module.exports = { handleAiMessage }
+async function maybeEatOrAlert (bot, notifyOwner) {
+  if (autoEating) return
+  if (typeof bot.food !== 'number' || bot.food > AUTO_EAT_THRESHOLD) return
+
+  const food = findFoodItem(bot)
+  if (food) {
+    autoEating = true
+    try {
+      await eatFood(bot, food)
+    } catch (err) {
+      console.log(`[ai] auto-eat error: ${err.stack || err}`)
+    } finally {
+      autoEating = false
+    }
+    return
+  }
+
+  if (bot.food > LOW_FOOD_ALERT_THRESHOLD) return
+  const now = Date.now()
+  if (now - lastLowFoodAlert < LOW_FOOD_ALERT_COOLDOWN_MS) return
+  lastLowFoodAlert = now
+  notifyOwner(`I'm hungry (${bot.food}/20) and out of food!`)
+}
+
+/** Call once after the bot spawns. Runs on every health/food update (mineflayer's 'health' event covers both). */
+function attachAutoSurvival (bot, notifyOwner) {
+  bot.on('health', () => {
+    maybeEatOrAlert(bot, notifyOwner).catch((err) => console.log(`[ai] maybeEatOrAlert error: ${err.stack || err}`))
+  })
+}
+
+module.exports = { handleAiMessage, attachAutoSurvival }

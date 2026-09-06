@@ -11,7 +11,7 @@
  */
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements } = require('mineflayer-pathfinder')
-const { handleAiMessage } = require('./ai')
+const { handleAiMessage, attachAutoSurvival } = require('./ai')
 const { rconCommand } = require('./rcon')
 
 const HOST = process.env.MC_HOST || 'minecraft.local'
@@ -148,6 +148,21 @@ function stripAddressedPrefix (message) {
   return mentioned ? message : null
 }
 
+// Not a real whisper: Survival enforces secure/signed chat, and this bot's
+// unofficial 26.2 protocol patch can't produce a valid signing key for that
+// account, so bot.whisper()'s /tell silently never reaches the owner's
+// client even though the command "succeeds" server-side. Sent via RCON
+// `tellraw` instead — that originates from the server console, not a signed
+// player chat packet, so it bypasses the problem entirely, and stays private
+// (only the named target sees it), unlike public bot.chat(). Shared by both
+// the AI trust-approval flow and auto-survival's low-food alert.
+function notifyOwner (msg) {
+  if (!RCON_PASSWORD) { log('owner notify skipped: RCON_PASSWORD not set'); return }
+  const payload = JSON.stringify({ text: `[bpk] ${msg}`, color: 'gold', bold: true })
+  rconCommand(RCON_HOST, RCON_PORT, RCON_PASSWORD, `tellraw ${OWNER_DISPLAY} ${payload}`)
+    .catch((err) => log(`owner notify failed: ${err.stack || err}`))
+}
+
 function handleChatLine (username, message, reply) {
   if (username === bot.username) return
   const parts = message.trim().split(/\s+/)
@@ -157,20 +172,7 @@ function handleChatLine (username, message, reply) {
   } else if (cmd === 'durability') {
     handleDurabilityCommand(reply)
   } else {
-    // Not a real whisper: Survival enforces secure/signed chat, and this bot's
-    // unofficial 26.2 protocol patch can't produce a valid signing key for
-    // that account, so bot.whisper()'s /tell silently never reaches the
-    // owner's client even though the command "succeeds" server-side. Sent via
-    // RCON `tellraw` instead — that originates from the server console, not
-    // a signed player chat packet, so it bypasses the problem entirely, and
-    // stays private (only the named target sees it), unlike public bot.chat().
-    const ownerReply = (msg) => {
-      if (!RCON_PASSWORD) { log('owner notify skipped: RCON_PASSWORD not set'); return }
-      const payload = JSON.stringify({ text: `[bpk] ${msg}`, color: 'gold', bold: true })
-      rconCommand(RCON_HOST, RCON_PORT, RCON_PASSWORD, `tellraw ${OWNER_DISPLAY} ${payload}`)
-        .catch((err) => log(`owner notify failed: ${err.stack || err}`))
-    }
-    handleAiMessage(bot, handleEquipCommand, username, message, reply, ownerReply)
+    handleAiMessage(bot, handleEquipCommand, username, message, reply, notifyOwner)
       .catch((err) => log(`ai handler error: ${err.stack || err}`))
   }
 }
@@ -194,6 +196,7 @@ function connect () {
     hideErrors: false
   })
   bot.loadPlugin(pathfinder)
+  attachAutoSurvival(bot, notifyOwner)
 
   bot.on('login', () => {
     log(`login username=${bot.username}`)
