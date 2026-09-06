@@ -20,6 +20,7 @@ const AUTH = process.env.MC_AUTH || 'microsoft'
 const USERNAME = process.env.MC_USER || 'bloodypuddlekos'
 const OWNER_DISPLAY = process.env.BOT_OWNER || 'KingOfThisHouse'
 const NEARBY_CHAT_RADIUS = Number(process.env.NEARBY_CHAT_RADIUS || 3)
+const NICKNAMES = (process.env.BOT_NICKNAMES || 'bpk').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
 
 const MIN_RECONNECT_MS = 5000
 const MAX_RECONNECT_MS = 5 * 60 * 1000
@@ -108,6 +109,18 @@ function handleDurabilityCommand (reply) {
   reply(lines.length ? lines.join(', ') : 'nothing worn/held with durability')
 }
 
+/** Returns the message with the leading name stripped, if it starts with the bot's username or a configured nickname; otherwise null. */
+function stripAddressedPrefix (message) {
+  const lower = message.toLowerCase()
+  for (const name of [bot.username.toLowerCase(), ...NICKNAMES]) {
+    const prefix = name + ' '
+    if (lower.startsWith(prefix)) {
+      return message.slice(prefix.length)
+    }
+  }
+  return null
+}
+
 function handleChatLine (username, message, reply) {
   if (username === bot.username) return
   const parts = message.trim().split(/\s+/)
@@ -159,17 +172,22 @@ function connect () {
   })
 
   bot.on('whisper', (username, message) => {
+    log(`whisper from ${username}: ${message}`)
     handleChatLine(username, message, (msg) => bot.whisper(username, msg))
   })
 
   bot.on('chat', (username, message) => {
-    const prefix = bot.username.toLowerCase() + ' '
-    if (message.toLowerCase().startsWith(prefix)) {
-      handleChatLine(username, message.slice(prefix.length), (msg) => bot.chat(msg))
+    if (username === bot.username) return
+    const stripped = stripAddressedPrefix(message)
+    if (stripped !== null) {
+      log(`chat (prefixed) from ${username}: ${message}`)
+      handleChatLine(username, stripped, (msg) => bot.chat(msg))
       return
     }
     // No name prefix, but if they're standing close by, assume they're talking to us.
     const entity = bot.players[username]?.entity
+    const dist = entity && bot.entity ? entity.position.distanceTo(bot.entity.position).toFixed(1) : 'unknown'
+    log(`chat (unprefixed) from ${username}, distance=${dist}: ${message}`)
     if (entity && bot.entity && entity.position.distanceTo(bot.entity.position) <= NEARBY_CHAT_RADIUS) {
       handleChatLine(username, message, (msg) => bot.chat(msg))
     }
