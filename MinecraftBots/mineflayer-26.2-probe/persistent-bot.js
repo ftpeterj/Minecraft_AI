@@ -49,6 +49,19 @@ function destinationFor (itemName, forceOffhand) {
   return 'hand'
 }
 
+/**
+ * bot.players[name].entity is populated from a different packet than the
+ * tab-list entry and can lag or stay unset even when the player is genuinely
+ * nearby and rendered — fall back to scanning bot.entities directly, which
+ * tends to be more reliably populated once a player is actually spawned in
+ * the bot's world view.
+ */
+function findPlayerEntity (username) {
+  const viaPlayers = bot.players[username]?.entity
+  if (viaPlayers) return viaPlayers
+  return Object.values(bot.entities).find((e) => e.type === 'player' && e.username === username)
+}
+
 function findItem (inventory, query) {
   const q = query.trim().toLowerCase().replace(/[\s-]+/g, '_')
   const items = inventory.items()
@@ -140,7 +153,9 @@ function handleChatLine (username, message, reply) {
   } else if (cmd === 'durability') {
     handleDurabilityCommand(reply)
   } else {
-    const ownerReply = (msg) => { try { bot.whisper(OWNER_DISPLAY, msg) } catch {} }
+    const ownerReply = (msg) => {
+      try { bot.whisper(OWNER_DISPLAY, msg) } catch (err) { log(`owner whisper failed: ${err.stack || err}`) }
+    }
     handleAiMessage(bot, handleEquipCommand, username, message, reply, ownerReply)
       .catch((err) => log(`ai handler error: ${err.stack || err}`))
   }
@@ -195,11 +210,13 @@ function connect () {
       return
     }
     // No name prefix, but if they're standing close by, assume they're talking to us.
-    const entity = bot.players[username]?.entity
+    const entity = findPlayerEntity(username)
     const dist = entity && bot.entity ? entity.position.distanceTo(bot.entity.position).toFixed(1) : 'unknown'
     log(`chat (unprefixed) from ${username}, distance=${dist}: ${message}`)
     if (entity && bot.entity && entity.position.distanceTo(bot.entity.position) <= NEARBY_CHAT_RADIUS) {
       handleChatLine(username, message, (msg) => bot.chat(msg))
+    } else if (!entity) {
+      log(`could not locate ${username}'s entity at all (bot.players and bot.entities both missed) — message dropped`)
     }
   })
 

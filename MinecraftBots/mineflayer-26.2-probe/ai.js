@@ -49,7 +49,16 @@ Keep replies short and in-character, like a fellow player chatting, not an assis
 If someone asks you to do something you have a tool for, call that tool. Otherwise just reply in chat.
 Only call a tool when the message is clearly asking you to act, not for idle chat.
 If you're unsure how to make, craft, build, or do something in Minecraft, use wiki_lookup to check
-the Minecraft Wiki rather than guessing — then answer using what it tells you.`
+the Minecraft Wiki rather than guessing — then answer using what it tells you.
+You never decide on your own who to trust. If someone asks to be friends, asks you to trust them,
+or asks why you won't do something for them, call request_friendship — never say yes yourself and
+never claim you're already friends unless a tool result told you so.
+Always reply only in English, using only standard Latin letters — never any other script.`
+
+/** Defensive filter: strip any stray non-Latin-script characters (a known qwen2.5 quirk — it occasionally leaks CJK text) before a reply reaches chat. */
+function stripNonLatinScript (text) {
+  return text.replace(/[　-鿿가-힣＀-￯]+/g, '').replace(/\s{2,}/g, ' ').trim()
+}
 
 const TOOLS = [
   {
@@ -114,6 +123,14 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'request_friendship',
+      description: 'Call this whenever someone asks to be friends, asks you to trust them, or asks why you can\'t do something for them. Never grant trust yourself — this asks the owner to decide.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'wiki_lookup',
       description: 'Look up how to make, craft, build, find, or do something, from the Minecraft Wiki (minecraft.wiki). Use this whenever you are not sure of a recipe, mechanic, or game detail rather than guessing.',
       parameters: {
@@ -153,7 +170,7 @@ async function ollamaChat (sender, message) {
         { role: 'user', content: `${sender} says: ${message}` }
       ],
       tools: TOOLS,
-      options: { num_ctx: NUM_CTX }
+      options: { num_ctx: NUM_CTX, temperature: 0.3 }
     })
   })
   if (!res.ok) throw new Error(`ollama http ${res.status}`)
@@ -175,7 +192,7 @@ async function ollamaChatWithToolResult (sender, message, assistantMessage, tool
         assistantMessage,
         { role: 'tool', content: toolResultContent }
       ],
-      options: { num_ctx: NUM_CTX }
+      options: { num_ctx: NUM_CTX, temperature: 0.3 }
     })
   })
   if (!res.ok) throw new Error(`ollama http ${res.status}`)
@@ -198,17 +215,24 @@ function findItem (inventory, query) {
   )
 }
 
+/** bot.players[name].entity can lag/stay unset even when the player is genuinely nearby — fall back to scanning bot.entities directly. */
+function findPlayerEntity (bot, username) {
+  const viaPlayers = bot.players[username]?.entity
+  if (viaPlayers) return viaPlayers
+  return Object.values(bot.entities).find((e) => e.type === 'player' && e.username === username)
+}
+
 async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
   switch (toolName) {
     case 'come_here': {
-      const entity = bot.players[sender]?.entity
+      const entity = findPlayerEntity(bot, sender)
       if (!entity) { reply("I can't see you right now"); return }
       bot.pathfinder.setGoal(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 1))
       reply('on my way')
       return
     }
     case 'follow_player': {
-      const entity = bot.players[toolArgs.name]?.entity
+      const entity = findPlayerEntity(bot, toolArgs.name)
       if (!entity) { reply(`I can't see ${toolArgs.name} right now`); return }
       bot.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true)
       reply(`following ${toolArgs.name}`)
@@ -226,7 +250,7 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'give_item': {
-      const targetEntity = bot.players[toolArgs.name]?.entity
+      const targetEntity = findPlayerEntity(bot, toolArgs.name)
       if (!targetEntity) { reply(`I can't see ${toolArgs.name} right now`); return }
       const item = findItem(bot.inventory, toolArgs.item)
       if (!item) {
@@ -275,7 +299,14 @@ function handleOwnerDecision (bot, equipHandler, message, ownerReply) {
     pending.delete(name)
     if (decision === 'deny') {
       ownerReply(`denied ${name}`)
-      held.reply(`sorry, my owner said no`)
+      held.reply(held.toolName === 'request_friendship' ? `sorry, my owner said not to be friends` : `sorry, my owner said no`)
+      return true
+    }
+    if (held.toolName === 'request_friendship') {
+      friends.add(name)
+      saveFriends(friends)
+      ownerReply(`${name} is now a trusted friend`)
+      held.reply(`my owner said yes — we're friends now!`)
       return true
     }
     ownerReply(`approved this one request from ${name} (not a friend yet — say "friend add ${name}" for that)`)
@@ -332,7 +363,7 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
 
   const toolCall = assistantMessage.tool_calls?.[0]
   if (!toolCall) {
-    if (assistantMessage.content) reply(assistantMessage.content)
+    if (assistantMessage.content) reply(stripNonLatinScript(assistantMessage.content))
     return
   }
 
@@ -351,7 +382,7 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
     }
     try {
       const finalReply = await ollamaChatWithToolResult(sender, message, assistantMessage, resultText)
-      reply(finalReply || resultText)
+      reply(stripNonLatinScript(finalReply || resultText))
     } catch (err) {
       console.log(`[ai] wiki lookup error: ${err.stack || err}`)
       reply(resultText)
@@ -359,12 +390,22 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
     return
   }
 
-  if (isTrusted(sender)) {
+  if (toolName === 'request_friendship' && isTrusted(sender)) {
+    reply(`we're already friends!`)
+    return
+  }
+
+  if (toolName !== 'request_friendship' && isTrusted(sender)) {
     await runTool(bot, equipHandler, toolName, toolArgs, sender, reply)
     return
   }
 
   pending.set(sender.toLowerCase(), { toolName, toolArgs, originalSender: sender, reply })
+  if (toolName === 'request_friendship') {
+    reply('let me check with my owner first...')
+    ownerReplyFn(`${sender} wants to be friends. Reply "approve ${sender}" or "deny ${sender}".`)
+    return
+  }
   reply('let me check with my owner first...')
   ownerReplyFn(`${sender} asked me to: ${describeCall(toolName, toolArgs)}. Reply "approve ${sender}" or "deny ${sender}".`)
 }
