@@ -51,4 +51,16 @@ final class BotGui {
         viewer.openInventory(gui);
         viewer.sendMessage(BotStatusFormatter.format(target));
     }
+
+    static void openTrade(Player viewer, Player target) {
+        flushIfOpen(viewer);
+
+        BotTradeHolder holder = new BotTradeHolder(target, viewer);
+        Inventory gui = Bukkit.createInventory(holder, BotTradeHolder.SIZE, target.getName() + " trade");
+        holder.setInventory(gui);
+        holder.loadCatalog();
+
+        viewer.openInventory(gui);
+        viewer.sendMessage("§7Top row: click an item to mark it as wanted. Bottom row: place what you're offering. Close when done.");
+    }
 }

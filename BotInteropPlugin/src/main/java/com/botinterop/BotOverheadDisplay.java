@@ -129,7 +129,53 @@ public class BotOverheadDisplay {
             }
             text = text.append(Component.newline()).append(gear);
         }
+
+        Component effects = buildEffectsLine(target);
+        if (effects != null) {
+            text = text.append(Component.newline()).append(effects);
+        }
         return text;
+    }
+
+    private Component buildEffectsLine(Player target) {
+        var active = target.getActivePotionEffects();
+        if (active.isEmpty()) {
+            return null;
+        }
+        Component line = Component.empty();
+        boolean first = true;
+        for (var effect : active) {
+            String name = effect.getType().getKey().getKey().replace('_', ' ');
+            name = Character.toUpperCase(name.charAt(0)) + name.substring(1);
+            String level = toRoman(effect.getAmplifier() + 1);
+            NamedTextColor color = isHarmful(effect.getType()) ? NamedTextColor.DARK_PURPLE : NamedTextColor.AQUA;
+            if (!first) {
+                line = line.append(Component.text("  "));
+            }
+            line = line.append(Component.text(name + " " + level, color));
+            first = false;
+        }
+        return line;
+    }
+
+    private static boolean isHarmful(org.bukkit.potion.PotionEffectType type) {
+        String key = type.getKey().getKey();
+        return switch (key) {
+            case "poison", "wither", "weakness", "slowness", "mining_fatigue", "nausea",
+                 "blindness", "hunger", "levitation", "unluck", "darkness", "instant_damage" -> true;
+            default -> false;
+        };
+    }
+
+    private static String toRoman(int n) {
+        return switch (n) {
+            case 1 -> "I";
+            case 2 -> "II";
+            case 3 -> "III";
+            case 4 -> "IV";
+            case 5 -> "V";
+            default -> String.valueOf(n);
+        };
     }
 
     private void addDurabilityLine(java.util.List<Component> out, String label, ItemStack item) {

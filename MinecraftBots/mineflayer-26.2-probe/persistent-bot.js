@@ -10,12 +10,16 @@
  * Ctrl+C to quit cleanly.
  */
 const mineflayer = require('mineflayer')
+const { pathfinder, Movements } = require('mineflayer-pathfinder')
+const { handleAiMessage } = require('./ai')
 
 const HOST = process.env.MC_HOST || 'minecraft.local'
 const PORT = Number(process.env.MC_PORT || 25566)
 const VERSION = process.env.MC_VERSION || '26.2'
 const AUTH = process.env.MC_AUTH || 'microsoft'
 const USERNAME = process.env.MC_USER || 'bloodypuddlekos'
+const OWNER_DISPLAY = process.env.BOT_OWNER || 'KingOfThisHouse'
+const NEARBY_CHAT_RADIUS = Number(process.env.NEARBY_CHAT_RADIUS || 3)
 
 const MIN_RECONNECT_MS = 5000
 const MAX_RECONNECT_MS = 5 * 60 * 1000
@@ -81,11 +85,38 @@ async function handleEquipCommand (args, reply) {
   }
 }
 
+function durabilityLine (label, item) {
+  if (!item || !item.maxDurability) return null
+  const remaining = item.maxDurability - (item.durabilityUsed || 0)
+  const pct = Math.round((remaining / item.maxDurability) * 100)
+  return `${label} ${pct}%`
+}
+
+function handleDurabilityCommand (reply) {
+  const slots = bot.inventory.slots
+  const lines = [
+    durabilityLine('helmet', slots[5]),
+    durabilityLine('chest', slots[6]),
+    durabilityLine('legs', slots[7]),
+    durabilityLine('boots', slots[8]),
+    durabilityLine('hand', bot.heldItem),
+    durabilityLine('offhand', slots[45])
+  ].filter(Boolean)
+  reply(lines.length ? lines.join(', ') : 'nothing worn/held with durability')
+}
+
 function handleChatLine (username, message, reply) {
   if (username === bot.username) return
   const parts = message.trim().split(/\s+/)
-  if (parts[0]?.toLowerCase() === 'equip') {
+  const cmd = parts[0]?.toLowerCase()
+  if (cmd === 'equip') {
     handleEquipCommand(parts.slice(1), reply).catch((err) => log(`equip handler error: ${err.stack || err}`))
+  } else if (cmd === 'durability') {
+    handleDurabilityCommand(reply)
+  } else {
+    const ownerReply = (msg) => { try { bot.whisper(OWNER_DISPLAY, msg) } catch {} }
+    handleAiMessage(bot, handleEquipCommand, username, message, reply, ownerReply)
+      .catch((err) => log(`ai handler error: ${err.stack || err}`))
   }
 }
 
@@ -107,6 +138,7 @@ function connect () {
     auth: AUTH,
     hideErrors: false
   })
+  bot.loadPlugin(pathfinder)
 
   bot.on('login', () => {
     log(`login username=${bot.username}`)
@@ -116,6 +148,11 @@ function connect () {
     reconnectDelay = MIN_RECONNECT_MS
     const p = bot.entity?.position
     log(`SPAWN at ${p?.x?.toFixed?.(1)},${p?.y?.toFixed?.(1)},${p?.z?.toFixed?.(1)} gameMode=${bot.game?.gameMode} dim=${bot.game?.dimension}`)
+    try {
+      bot.pathfinder.setMovements(new Movements(bot))
+    } catch (err) {
+      log(`pathfinder movements setup failed: ${err.stack || err}`)
+    }
   })
 
   bot.on('whisper', (username, message) => {
@@ -126,6 +163,12 @@ function connect () {
     const prefix = bot.username.toLowerCase() + ' '
     if (message.toLowerCase().startsWith(prefix)) {
       handleChatLine(username, message.slice(prefix.length), (msg) => bot.chat(msg))
+      return
+    }
+    // No name prefix, but if they're standing close by, assume they're talking to us.
+    const entity = bot.players[username]?.entity
+    if (entity && bot.entity && entity.position.distanceTo(bot.entity.position) <= NEARBY_CHAT_RADIUS) {
+      handleChatLine(username, message, (msg) => bot.chat(msg))
     }
   })
 

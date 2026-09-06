@@ -2,3 +2,7 @@
 # and /botstatus. Match is case-insensitive.
 bot-accounts:
   - bloodypuddlekos
+
+# Only the owner and players on the friends list (see /botfriend) can see or
+# open a bot account's inventory (right-click, /botinv, /botarmor).
+owner: KingOfThisHouse

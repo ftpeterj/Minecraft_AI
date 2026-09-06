@@ -12,6 +12,9 @@ public class BotInteropPlugin extends JavaPlugin {
 
     private final Set<String> botAccounts = new HashSet<>();
     private BotOverheadDisplay overhead;
+    private BotRepairService repair;
+    private BotFriendService friends;
+    private BotTradeService trades;
 
     @Override
     public void onEnable() {
@@ -20,12 +23,18 @@ public class BotInteropPlugin extends JavaPlugin {
 
         overhead = new BotOverheadDisplay(this);
         overhead.cleanupOrphans();
+        repair = new BotRepairService(this);
+        friends = new BotFriendService(this);
+        trades = new BotTradeService();
 
-        getServer().getPluginManager().registerEvents(new BotInventoryListener(this), this);
+        getServer().getPluginManager().registerEvents(new BotInventoryListener(this, trades), this);
         getServer().getPluginManager().registerEvents(new BotOverheadListener(this, overhead), this);
         getCommand("botstatus").setExecutor(new BotStatusCommand(this));
         getCommand("botinv").setExecutor(new BotInvCommand(this));
         getCommand("botarmor").setExecutor(new BotArmorCommand(this));
+        getCommand("botrepair").setExecutor(new BotRepairCommand(this, repair));
+        getCommand("botfriend").setExecutor(new BotFriendCommand(friends));
+        getCommand("bottrade").setExecutor(new BotTradeCommand(friends, trades));
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (isBotAccount(player.getName())) {
@@ -41,6 +50,9 @@ public class BotInteropPlugin extends JavaPlugin {
         if (overhead != null) {
             overhead.stopAll();
         }
+        if (repair != null) {
+            repair.stopAll();
+        }
     }
 
     void loadBotAccounts() {
@@ -53,5 +65,9 @@ public class BotInteropPlugin extends JavaPlugin {
 
     public boolean isBotAccount(String playerName) {
         return botAccounts.contains(playerName.toLowerCase());
+    }
+
+    public BotFriendService getFriends() {
+        return friends;
     }
 }

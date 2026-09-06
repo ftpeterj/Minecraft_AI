@@ -16,15 +16,17 @@ import org.bukkit.inventory.Inventory;
  * OWNING player open their own PlayerInventory with armor/offhand visible;
  * a plain openInventory(otherPlayer.getInventory()) only shows the 36
  * main/hotbar slots. So instead we build custom GUIs (see BotInventoryHolder,
- * BotArmorHolder) seeded from the bot's real inventory, and sync any edits
- * back to the bot's real inventory on every click/drag/close.
+ * BotArmorHolder, BotTradeHolder) seeded from the bot's real inventory, and
+ * sync any edits back to the bot's real inventory on every click/drag/close.
  */
 public class BotInventoryListener implements Listener {
 
     private final BotInteropPlugin plugin;
+    private final BotTradeService trades;
 
-    public BotInventoryListener(BotInteropPlugin plugin) {
+    public BotInventoryListener(BotInteropPlugin plugin, BotTradeService trades) {
         this.plugin = plugin;
+        this.trades = trades;
     }
 
     @EventHandler
@@ -46,7 +48,11 @@ public class BotInventoryListener implements Listener {
         }
 
         event.setCancelled(true);
-        BotGui.openInventory(clicker, target);
+        if (plugin.getFriends().isTrusted(clicker.getName())) {
+            BotGui.openInventory(clicker, target);
+        } else {
+            BotGui.openTrade(clicker, target);
+        }
     }
 
     /**
@@ -81,10 +87,18 @@ public class BotInventoryListener implements Listener {
         Inventory top = event.getView().getTopInventory();
         int rawSlot = event.getRawSlot();
         boolean clickedTop = rawSlot >= 0 && rawSlot < top.getSize();
+
         if (top.getHolder() instanceof BotArmorHolder && clickedTop && !BotArmorHolder.isInteractiveSlot(rawSlot)) {
             event.setCancelled(true);
             return;
         }
+        if (top.getHolder() instanceof BotTradeHolder trade && clickedTop && BotTradeHolder.isCatalogSlot(rawSlot)) {
+            event.setCancelled(true);
+            trade.registerWant(rawSlot);
+            event.getWhoClicked().sendMessage("§7Marked as wanted. Close the window when your offer is ready.");
+            return;
+        }
+
         Runnable syncer = syncerFor(top);
         if (syncer != null) {
             scheduleSync(top, syncer);
@@ -102,6 +116,14 @@ public class BotInventoryListener implements Listener {
                 return;
             }
         }
+        if (top.getHolder() instanceof BotTradeHolder) {
+            boolean touchesCatalog = event.getRawSlots().stream().anyMatch(BotTradeHolder::isCatalogSlot);
+            if (touchesCatalog) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
         Runnable syncer = syncerFor(top);
         if (syncer != null) {
             scheduleSync(top, syncer);
@@ -111,6 +133,24 @@ public class BotInventoryListener implements Listener {
     @EventHandler
     public void onClose(InventoryCloseEvent event) {
         Object holder = event.getInventory().getHolder();
+
+        if (holder instanceof BotTradeHolder trade) {
+            if (trade.isSubmitted() || trade.isEmpty()) {
+                return;
+            }
+            trade.markSubmitted();
+            trades.submit(trade.getTarget(), trade.getRequester(), trade.collectOffer(), trade.getWanted());
+            trade.getRequester().sendMessage("§7Trade proposal sent to " + trade.getTarget().getName() + "'s owner.");
+            for (Player online : Bukkit.getOnlinePlayers()) {
+                if (plugin.getFriends().isOwner(online.getName())) {
+                    online.sendMessage("§e[BotInterop] " + trade.getRequester().getName() + " wants to trade with "
+                            + trade.getTarget().getName() + ". Run /bottrade list, then /bottrade approve|deny "
+                            + trade.getRequester().getName() + ".");
+                }
+            }
+            return;
+        }
+
         // If BotGui.flushIfOpen already synced this exact holder (because opening
         // a replacement window force-closed it), skip — re-syncing here would read
         // this now-viewerless Inventory after Bukkit may have reset its contents,

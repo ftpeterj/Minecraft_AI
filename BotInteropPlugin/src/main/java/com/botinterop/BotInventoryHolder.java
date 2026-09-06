@@ -54,16 +54,24 @@ public class BotInventoryHolder implements InventoryHolder {
         }
     }
 
-    /** Writes the GUI's current contents back to the bot's real inventory. Safe to call more than once. */
+    /**
+     * Writes the GUI's current contents back to the bot's real inventory. Safe
+     * to call more than once. Deliberately sets each of the 36 slots
+     * individually rather than calling PlayerInventory#setContents() with a
+     * 36-element array — that call clears the entire underlying storage
+     * (armor + offhand included) before refilling just the 36 given slots,
+     * silently wiping armor as a side effect of simply opening and closing
+     * this window. Confirmed as the actual cause of "armor disappears" — not
+     * a race condition, not a platform bug, just this one bulk-write call.
+     */
     public void syncToTarget() {
         flushed = true;
         if (!target.isOnline()) {
             return;
         }
-        ItemStack[] main = new ItemStack[SIZE];
         for (int i = 0; i < SIZE; i++) {
-            main[i] = inventory.getItem(i);
+            target.getInventory().setItem(i, inventory.getItem(i));
         }
-        target.getInventory().setContents(main);
+        target.updateInventory(); // push the change to the bot's own client, or its local model goes stale
     }
 }

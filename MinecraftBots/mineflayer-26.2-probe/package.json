@@ -12,6 +12,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "mineflayer": "^4.38.0"
+    "mineflayer": "^4.38.0",
+    "mineflayer-pathfinder": "^2.4.5"
   }
 }

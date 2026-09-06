@@ -18,6 +18,16 @@ commands:
     description: Open a bot account's armor + offhand slots from anywhere
     usage: /botarmor <name>
     permission: botinterop.use
+  botrepair:
+    description: Toggle auto-repair (durability resets every 5s) for a bot account
+    usage: /botrepair <name> <on|off>
+    permission: botinterop.use
+  botfriend:
+    description: Manage who's trusted to see/open a bot account's inventory (owner-only)
+    usage: /botfriend <add|remove|list> [name]
+  bottrade:
+    description: Approve/deny a non-friend's trade proposal with a bot account (owner-only)
+    usage: /bottrade <approve|deny|list> [name]
 
 permissions:
   botinterop.use:

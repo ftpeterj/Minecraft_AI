@@ -36,6 +36,10 @@ public class BotInvCommand implements CommandExecutor {
             sender.sendMessage("§7" + name + " is not currently online.");
             return true;
         }
+        if (!plugin.getFriends().isTrusted(viewer.getName())) {
+            sender.sendMessage("§c" + name + " doesn't know you well enough to show you their inventory.");
+            return true;
+        }
 
         BotGui.openInventory(viewer, target);
         return true;

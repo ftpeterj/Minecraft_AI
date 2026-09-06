@@ -6,22 +6,20 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
-public class BotArmorCommand implements CommandExecutor {
+public class BotRepairCommand implements CommandExecutor {
 
     private final BotInteropPlugin plugin;
+    private final BotRepairService repair;
 
-    public BotArmorCommand(BotInteropPlugin plugin) {
+    public BotRepairCommand(BotInteropPlugin plugin, BotRepairService repair) {
         this.plugin = plugin;
+        this.repair = repair;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!(sender instanceof Player viewer)) {
-            sender.sendMessage("§cOnly a player can open this.");
-            return true;
-        }
-        if (args.length != 1) {
-            sender.sendMessage("§cUsage: /botarmor <name>");
+        if (args.length != 2 || !(args[1].equalsIgnoreCase("on") || args[1].equalsIgnoreCase("off"))) {
+            sender.sendMessage("§cUsage: /botrepair <name> <on|off>");
             return true;
         }
 
@@ -36,12 +34,15 @@ public class BotArmorCommand implements CommandExecutor {
             sender.sendMessage("§7" + name + " is not currently online.");
             return true;
         }
-        if (!plugin.getFriends().isTrusted(viewer.getName())) {
-            sender.sendMessage("§c" + name + " doesn't know you well enough to show you their inventory.");
-            return true;
-        }
 
-        BotGui.openArmor(viewer, target);
+        boolean on = args[1].equalsIgnoreCase("on");
+        if (on) {
+            repair.enable(target);
+            sender.sendMessage("§a[BotInterop] Auto-repair ON for " + target.getName() + " — heals ~1% durability every 10s.");
+        } else {
+            repair.disable(target);
+            sender.sendMessage("§7[BotInterop] Auto-repair OFF for " + target.getName() + ".");
+        }
         return true;
     }
 }
