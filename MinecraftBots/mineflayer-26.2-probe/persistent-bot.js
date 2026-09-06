@@ -12,6 +12,7 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements } = require('mineflayer-pathfinder')
 const { handleAiMessage } = require('./ai')
+const { rconCommand } = require('./rcon')
 
 const HOST = process.env.MC_HOST || 'minecraft.local'
 const PORT = Number(process.env.MC_PORT || 25566)
@@ -21,6 +22,9 @@ const USERNAME = process.env.MC_USER || 'bloodypuddlekos'
 const OWNER_DISPLAY = process.env.BOT_OWNER || 'KingOfThisHouse'
 const NEARBY_CHAT_RADIUS = Number(process.env.NEARBY_CHAT_RADIUS || 3)
 const NICKNAMES = (process.env.BOT_NICKNAMES || 'bpk').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+const RCON_HOST = process.env.RCON_HOST || 'minecraft.local'
+const RCON_PORT = Number(process.env.RCON_PORT || 25575)
+const RCON_PASSWORD = process.env.RCON_PASSWORD || ''
 
 const MIN_RECONNECT_MS = 5000
 const MAX_RECONNECT_MS = 5 * 60 * 1000
@@ -153,8 +157,18 @@ function handleChatLine (username, message, reply) {
   } else if (cmd === 'durability') {
     handleDurabilityCommand(reply)
   } else {
+    // Not a real whisper: Survival enforces secure/signed chat, and this bot's
+    // unofficial 26.2 protocol patch can't produce a valid signing key for
+    // that account, so bot.whisper()'s /tell silently never reaches the
+    // owner's client even though the command "succeeds" server-side. Sent via
+    // RCON `tellraw` instead — that originates from the server console, not
+    // a signed player chat packet, so it bypasses the problem entirely, and
+    // stays private (only the named target sees it), unlike public bot.chat().
     const ownerReply = (msg) => {
-      try { bot.whisper(OWNER_DISPLAY, msg) } catch (err) { log(`owner whisper failed: ${err.stack || err}`) }
+      if (!RCON_PASSWORD) { log('owner notify skipped: RCON_PASSWORD not set'); return }
+      const payload = JSON.stringify({ text: `[bpk] ${msg}`, color: 'gold', bold: true })
+      rconCommand(RCON_HOST, RCON_PORT, RCON_PASSWORD, `tellraw ${OWNER_DISPLAY} ${payload}`)
+        .catch((err) => log(`owner notify failed: ${err.stack || err}`))
     }
     handleAiMessage(bot, handleEquipCommand, username, message, reply, ownerReply)
       .catch((err) => log(`ai handler error: ${err.stack || err}`))
