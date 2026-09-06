@@ -15,12 +15,12 @@ const path = require('path')
 const { goals } = require('mineflayer-pathfinder')
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434'
-const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:14b'
-// Keeps the model fully on the 12GB GPU (RX 6700 XT) instead of spilling into
-// CPU: at the default 32K context, weights+KV-cache don't fit and Ollama
-// silently splits ~32% of layers to CPU (much slower). Our conversations are
-// short, so a much smaller context loses nothing here but keeps it 100% GPU.
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096)
+// qwen2.5:7b (not 14b): same tool-calling format/prompt, ~half the VRAM
+// (4.7GB weights vs 9GB), noticeably faster on this 12GB card while it's
+// also driving Minecraft's shaders. At num_ctx 8192 it still sits at 100%
+// GPU with room to spare (~5.1GB total) — see `ollama ps` if this regresses.
+const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b'
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192)
 const OWNER = (process.env.BOT_OWNER || 'KingOfThisHouse').toLowerCase()
 const FRIENDS_PATH = path.join(__dirname, 'friends.json')
 
