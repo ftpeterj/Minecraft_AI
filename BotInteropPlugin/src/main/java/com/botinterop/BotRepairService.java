@@ -57,30 +57,47 @@ public class BotRepairService {
             disable(target);
             return;
         }
+        // Explicitly write each repaired item back with the matching setter —
+        // confirmed live that getItemInMainHand() doesn't reliably return a
+        // live, auto-syncing reference on this build (mutating it silently
+        // did nothing: gave the bot a damaged wooden axe, waited past two
+        // repair cycles, damage never changed). Same class of bug as the
+        // getContents()/setContents() unreliability found earlier — never
+        // trust a bulk/getter-based inventory read to auto-sync here.
         PlayerInventory inv = target.getInventory();
-        repair(inv.getHelmet());
-        repair(inv.getChestplate());
-        repair(inv.getLeggings());
-        repair(inv.getBoots());
-        repair(inv.getItemInMainHand());
-        repair(inv.getItemInOffHand());
+        ItemStack helmet = repair(inv.getHelmet());
+        if (helmet != null) inv.setHelmet(helmet);
+        ItemStack chestplate = repair(inv.getChestplate());
+        if (chestplate != null) inv.setChestplate(chestplate);
+        ItemStack leggings = repair(inv.getLeggings());
+        if (leggings != null) inv.setLeggings(leggings);
+        ItemStack boots = repair(inv.getBoots());
+        if (boots != null) inv.setBoots(boots);
+        ItemStack mainHand = repair(inv.getItemInMainHand());
+        if (mainHand != null) inv.setItemInMainHand(mainHand);
+        ItemStack offHand = repair(inv.getItemInOffHand());
+        if (offHand != null) inv.setItemInOffHand(offHand);
+        target.updateInventory();
     }
 
     private static final double HEAL_FRACTION_PER_TICK = 0.01; // ~1% of max durability per run
 
-    private void repair(ItemStack item) {
+    /** Returns the mutated item to write back, or null if there was nothing to repair (air, no durability, or already full). */
+    private ItemStack repair(ItemStack item) {
         if (item == null || item.getType().isAir()) {
-            return;
+            return null;
         }
         int max = item.getType().getMaxDurability();
         if (max <= 0) {
-            return;
+            return null;
         }
         ItemMeta meta = item.getItemMeta();
         if (meta instanceof Damageable d && d.getDamage() > 0) {
             int healAmount = Math.max(1, (int) Math.round(max * HEAL_FRACTION_PER_TICK));
             d.setDamage(Math.max(0, d.getDamage() - healAmount));
             item.setItemMeta(meta);
+            return item;
         }
+        return null;
     }
 }
