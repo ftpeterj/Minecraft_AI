@@ -812,7 +812,9 @@ async function findFoodInNearbyChests (bot) {
 
 /** Walks to the container, withdraws one food item from the ground-truth-verified slot, and eats it. */
 async function eatFromChest (bot, pos, slot) {
-  await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 2))
+  // GoalGetToBlock — explicitly documented for chest-like interactions,
+  // guarantees an adjacent position rather than just "within 2 blocks".
+  await bot.pathfinder.goto(new goals.GoalGetToBlock(pos.x, pos.y, pos.z))
   const block = bot.blockAt(pos)
   const window = await bot.openContainer(block)
   try {
@@ -1223,12 +1225,14 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       if (!inputGT) { reply(`I don't have "${toolArgs.item}" to smelt`); return }
       const fuelGT = await findItemByRealName(bot, (name) => FUEL_NAMES.has(name))
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(furnacePos.x, furnacePos.y, furnacePos.z, 2))
-        // Real interactions are aim-based server-side — arriving nearby isn't
-        // enough if the bot ends up facing some other direction from
-        // whatever it was doing right before. Suspected (not yet fully
-        // confirmed) cause of a live 20s openFurnace() timeout even with a
-        // ground-truth-verified real furnace at the target position.
+        // GoalLookAtBlock (not GoalNear) — validates via raycast that the
+        // furnace's face is actually visible from wherever it stops, not
+        // just "within 2 blocks" (which could still be the wrong side of a
+        // wall). Real interactions are aim-based server-side, so still
+        // explicitly look at it before interacting even after arriving —
+        // suspected cause of a live 20s openFurnace() timeout that persisted
+        // even with a ground-truth-verified real furnace at the position.
+        await bot.pathfinder.goto(new goals.GoalLookAtBlock(new Vec3(furnacePos.x, furnacePos.y, furnacePos.z), bot.world))
         await bot.lookAt(furnaceBlock.position.offset(0.5, 0.5, 0.5))
         const furnace = await bot.openFurnace(furnaceBlock)
         if (fuelGT) await furnace.putFuel(fuelGT.item.type, null, fuelGT.item.count)
@@ -1265,7 +1269,8 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       const campfireBlock = bot.blockAt(new Vec3(campfirePos.x, campfirePos.y, campfirePos.z))
 
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(campfirePos.x, campfirePos.y, campfirePos.z, 2))
+        // GoalLookAtBlock over GoalNear — see the smelt case for why.
+        await bot.pathfinder.goto(new goals.GoalLookAtBlock(new Vec3(campfirePos.x, campfirePos.y, campfirePos.z), bot.world))
         await bot.lookAt(campfireBlock.position.offset(0.5, 0.5, 0.5))
       } catch (err) {
         reply(`couldn't get to the campfire: ${err.message}`)
@@ -1339,7 +1344,8 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       const fuelGT = await findItemByRealName(bot, (name) => name === 'blaze_powder')
 
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(standPos.x, standPos.y, standPos.z, 2))
+        // GoalLookAtBlock over GoalNear — see the smelt case for why.
+        await bot.pathfinder.goto(new goals.GoalLookAtBlock(new Vec3(standPos.x, standPos.y, standPos.z), bot.world))
         await bot.lookAt(stand.position.offset(0.5, 0.5, 0.5))
         const window = await bot.openBlock(stand)
         if (fuelGT) {
