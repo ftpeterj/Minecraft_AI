@@ -125,6 +125,9 @@ You have real survival skills: mine_block, craft_item, smelt (furnace/smoker), f
 brew_potion, enter_boat/exit_boat, and attack_nearby_hostile if something is threatening you or
 your owner. Use them when asked, or on your own initiative if it's clearly needed (e.g. fighting
 back if attacked) — you don't need to narrate every step, just act and report the outcome.
+If a message gives exact x/y/z coordinates (e.g. "go to -100 64 200" or "return to <coords>"),
+call goto_location only — never come_here as well for the same request, even if the message also
+mentions you or the word "return".
 Always reply only in English, using only standard Latin letters — never any other script.`
 
 /**
@@ -229,7 +232,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'come_here',
-      description: 'Walk to the player who is asking, using their current position.',
+      description: 'Walk to the player who is asking, using their current position. Do NOT use this if the message gives specific x/y/z coordinates — use goto_location for that instead, and never call both for the same request.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
