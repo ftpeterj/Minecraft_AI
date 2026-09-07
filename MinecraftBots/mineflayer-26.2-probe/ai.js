@@ -69,16 +69,21 @@ const WEAPON_NAMES = new Set([
 ])
 const FUEL_NAMES = new Set(['coal', 'charcoal', 'coal_block', 'blaze_rod', 'lava_bucket', 'oak_planks', 'stick'])
 
-// The model sometimes generalizes a vague request ("cook the fish", no
-// specific type given) into a generic term like "raw_fish" that isn't a
-// real Minecraft item — the actual item is "cod" or "salmon". Only these
-// two are actually smeltable/campfire-cookable (tropical_fish/pufferfish
-// aren't). Falls back to exact-name matching for anything not recognized
-// as this kind of generic reference.
+// Per minecraft.wiki/w/Campfire, exactly these 9 raw items can be cooked on
+// a campfire (also true for furnace/smoker, a superset of what those need
+// fuel for): beef, chicken, rabbit, porkchop, mutton, cod, salmon, potato,
+// kelp. The model sometimes generalizes a vague request ("cook the fish"/
+// "cook the meat", no specific type given) into a generic term that isn't a
+// real Minecraft item — falls back to exact-name matching for anything not
+// recognized as this kind of generic reference.
+const CAMPFIRE_COOKABLE_RAW = ['beef', 'chicken', 'rabbit', 'porkchop', 'mutton', 'cod', 'salmon', 'potato', 'kelp']
 const GENERIC_FOOD_ALIASES = new Map([
   ['fish', ['cod', 'salmon']],
   ['raw_fish', ['cod', 'salmon']],
-  ['fishes', ['cod', 'salmon']]
+  ['fishes', ['cod', 'salmon']],
+  ['meat', ['beef', 'chicken', 'rabbit', 'porkchop', 'mutton']],
+  ['raw_meat', ['beef', 'chicken', 'rabbit', 'porkchop', 'mutton']],
+  ['food', CAMPFIRE_COOKABLE_RAW]
 ])
 
 function foodQueryMatcher (normalizedQuery) {
@@ -408,10 +413,10 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'use_campfire',
-      description: 'Cook food (like raw fish) on a nearby campfire — walks there, places up to 4 of the given food item in its open slots (it has 4 independent slots, not one like a furnace), waits about 30 seconds for them to finish, and collects the cooked results.',
+      description: 'Cook raw food on a nearby campfire — walks there, places up to 4 of the given food item in its open slots (it has 4 independent slots, not one like a furnace), waits about 30 seconds for them to finish, and collects the cooked results. A campfire can cook: beef, chicken, rabbit, porkchop, mutton, cod, salmon, potato, or kelp — nothing else.',
       parameters: {
         type: 'object',
-        properties: { item: { type: 'string', description: 'Food item to cook, e.g. "cod" or "salmon"' } },
+        properties: { item: { type: 'string', description: 'Raw food to cook, e.g. "cod", "beef", or "porkchop" — use whichever matches what was asked for or what you actually have' } },
         required: ['item']
       }
     }
@@ -1070,6 +1075,13 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       // and each item cooks in ~30s regardless of the others — placing all 4
       // together finishes together; the tool description already tells the
       // model to call this once per batch rather than one item at a time.
+      const normalizedEarly = toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_')
+      const aliasedNames = GENERIC_FOOD_ALIASES.get(normalizedEarly)
+      if (!aliasedNames && !CAMPFIRE_COOKABLE_RAW.includes(normalizedEarly)) {
+        reply(`a campfire can't cook "${toolArgs.item}" — only beef, chicken, rabbit, porkchop, mutton, cod, salmon, potato, or kelp`)
+        return
+      }
+
       const campfireTypes = ['campfire', 'soul_campfire']
         .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
       const campfireBlock = bot.findBlock({ matching: (b) => campfireTypes.includes(b.type), maxDistance: 16 })
@@ -1082,8 +1094,7 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         return
       }
 
-      const normalized = toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_')
-      const matchFood = foodQueryMatcher(normalized)
+      const matchFood = foodQueryMatcher(normalizedEarly)
       let placed = 0
       for (let i = 0; i < 4; i++) {
         const food = await findItemByRealName(bot, matchFood)
