@@ -608,16 +608,76 @@ async function eatFood (bot, food) {
 // patched/26.1-based protocol schema expects, the same general class of bug
 // as the item-id and entity-tracking issues found earlier). That leaves
 // bot.fish() hanging forever on the very first cast, since the condition it
-// waits for structurally can't ever fire. This sidesteps it: cast, wait a
-// fixed window, reel in regardless of whether anything actually bit — lower
-// catch rate than proper bite-timing would give, but it actually completes
-// instead of hanging indefinitely.
-const FISH_CAST_WAIT_MS = 7000
+// waits for structurally can't ever fire.
+//
+// Real signal used instead: the fishing_bobber entity has its own `biting`
+// metadata field (confirmed via bot.registry.entitiesByName.fishing_bobber
+// — index 9 in its metadataKeys), delivered via entity_metadata packets.
+// That's a different, much simpler field than the broken particle payload
+// (a plain boolean, not a variant-typed value), and spawn_entity/basic
+// entity_metadata haven't shown any decode errors in testing — only the
+// particle-type payload has. This tracks the bobber's own spawn packet,
+// then watches for its `biting` flag going true, and reels in immediately
+// when it does, rather than guessing on a fixed timer.
+const FISH_BOBBER_SPAWN_TIMEOUT_MS = 3000
+const FISH_BITE_TIMEOUT_MS = 30000
+const BOBBER_BITING_METADATA_KEY = 9
 
+function trackBobberSpawn (bot, timeoutMs = FISH_BOBBER_SPAWN_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    const bobberTypeId = bot.registry.entitiesByName.fishing_bobber?.id
+    let settled = false
+    const onSpawn = (packet) => {
+      if (packet.type !== bobberTypeId) return
+      finish(packet.entityId)
+    }
+    const timeout = setTimeout(() => finish(null), timeoutMs)
+    function finish (result) {
+      if (settled) return
+      settled = true
+      bot._client.removeListener('spawn_entity', onSpawn)
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    bot._client.on('spawn_entity', onSpawn)
+  })
+}
+
+function waitForBite (bot, bobberEntityId, timeoutMs = FISH_BITE_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let settled = false
+    const onMetadata = (packet) => {
+      if (packet.entityId !== bobberEntityId) return
+      const bitingEntry = packet.metadata?.find((m) => m.key === BOBBER_BITING_METADATA_KEY)
+      if (bitingEntry?.value) finish(true)
+    }
+    const timeout = setTimeout(() => finish(false), timeoutMs)
+    function finish (result) {
+      if (settled) return
+      settled = true
+      bot._client.removeListener('entity_metadata', onMetadata)
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    bot._client.on('entity_metadata', onMetadata)
+  })
+}
+
+/** Returns true if a bite was actually detected, false if it reeled in on a timeout/fallback instead. */
 async function fishOnce (bot) {
-  bot.activateItem()
-  await new Promise((resolve) => setTimeout(resolve, FISH_CAST_WAIT_MS))
-  bot.activateItem()
+  const bobberSpawned = trackBobberSpawn(bot)
+  bot.activateItem() // cast
+  const bobberId = await bobberSpawned
+  if (bobberId == null) {
+    // Couldn't identify the bobber (spawn packet never arrived/matched) —
+    // fall back to a fixed wait rather than hanging forever.
+    await new Promise((resolve) => setTimeout(resolve, 7000))
+    bot.activateItem()
+    return false
+  }
+  const bit = await waitForBite(bot, bobberId)
+  bot.activateItem() // reel in — whether a real bite or the timeout fallback
+  return bit
 }
 
 
@@ -678,12 +738,13 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         await bot.equip(rod.item, 'hand')
         await bot.lookAt(water.position.offset(0.5, 0.5, 0.5))
         fishingCancelled = false
-        let caught = 0
-        while (!fishingCancelled && caught < FISH_MAX_CATCHES_PER_CALL) {
-          await fishOnce(bot)
-          caught++
+        let casts = 0
+        let bites = 0
+        while (!fishingCancelled && casts < FISH_MAX_CATCHES_PER_CALL) {
+          if (await fishOnce(bot)) bites++
+          casts++
         }
-        reply(caught > 0 ? `done fishing for now — cast ${caught} time${caught === 1 ? '' : 's'}` : 'stopped fishing')
+        reply(casts > 0 ? `done fishing for now — ${bites} bite${bites === 1 ? '' : 's'} out of ${casts} cast${casts === 1 ? '' : 's'}` : 'stopped fishing')
       } catch (err) {
         reply(`fishing didn't pan out: ${err.message}`)
       }
