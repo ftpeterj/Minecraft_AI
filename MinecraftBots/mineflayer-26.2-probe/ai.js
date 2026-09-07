@@ -13,6 +13,7 @@
 const fs = require('fs')
 const path = require('path')
 const { goals } = require('mineflayer-pathfinder')
+const { Vec3 } = require('vec3')
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434'
 // qwen2.5:7b (not 14b): same tool-calling format/prompt, ~half the VRAM
@@ -55,6 +56,22 @@ const LOW_FOOD_ALERT_COOLDOWN_MS = 5 * 60 * 1000
 let autoEating = false
 let lastLowFoodAlert = 0
 
+// Self-defense: same reactive-autonomy pattern as auto-eat above, checked
+// periodically rather than every physics tick to avoid needless scanning.
+const HOSTILE_MOB_NAMES = new Set([
+  'zombie', 'skeleton', 'creeper', 'spider', 'cave_spider', 'enderman', 'witch', 'phantom',
+  'drowned', 'husk', 'stray', 'pillager', 'vindicator', 'evoker', 'ravager', 'zombie_villager',
+  'silverfish', 'blaze', 'ghast', 'slime', 'magma_cube', 'hoglin', 'zoglin', 'piglin_brute', 'warden'
+])
+const WEAPON_NAMES = new Set([
+  'wooden_sword', 'stone_sword', 'iron_sword', 'golden_sword', 'diamond_sword', 'netherite_sword',
+  'wooden_axe', 'stone_axe', 'iron_axe', 'golden_axe', 'diamond_axe', 'netherite_axe', 'trident'
+])
+const FUEL_NAMES = new Set(['coal', 'charcoal', 'coal_block', 'blaze_rod', 'lava_bucket', 'oak_planks', 'stick'])
+const DEFEND_RADIUS = 6
+const DEFEND_CHECK_EVERY_TICKS = 10
+let autoDefending = false
+
 const SYSTEM_PROMPT = `You are a helpful Minecraft player-character bot on a survival server.
 Keep replies short and in-character, like a fellow player chatting, not an assistant.
 If someone asks you to do something you have a tool for, call that tool. Otherwise just reply in chat.
@@ -70,6 +87,13 @@ guess or make up any of it.
 You are also told who your owner is, who your trusted friends are, and each of their last known
 positions (when visible to you) before each message — use that fact, don't ask who someone is or
 who owns you, and never claim someone is your owner or a friend unless it's actually in that list.
+You are also told what block you're standing on and notable blocks nearby (ores, trees, water,
+lava, crafting tables, furnaces, brewing stands, farmland) — use that for mining, farming, and
+crafting decisions instead of guessing what's around you.
+You have real survival skills: mine_block, craft_item, smelt (furnace/smoker), farm, fish,
+brew_potion, enter_boat/exit_boat, and attack_nearby_hostile if something is threatening you or
+your owner. Use them when asked, or on your own initiative if it's clearly needed (e.g. fighting
+back if attacked) — you don't need to narrate every step, just act and report the outcome.
 Always reply only in English, using only standard Latin letters — never any other script.`
 
 /**
@@ -115,6 +139,44 @@ function trustedPeopleContext (bot) {
   return `Your owner is ${OWNER_DISPLAY}. Trusted people and their last known positions:\n${lines.join('\n')}`
 }
 
+// Block names are far more version-stable than items (Mojang adds new items
+// far more often than new fundamental blocks), so unlike inventory reads
+// this doesn't need the ground-truth workaround above — bot.findBlocks()
+// against the local registry is trusted directly.
+const NOTABLE_BLOCKS = [
+  'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
+  'stone', 'coal_ore', 'iron_ore', 'copper_ore', 'gold_ore', 'redstone_ore', 'diamond_ore', 'lapis_ore', 'emerald_ore',
+  'deepslate_coal_ore', 'deepslate_iron_ore', 'deepslate_copper_ore', 'deepslate_gold_ore',
+  'deepslate_redstone_ore', 'deepslate_diamond_ore', 'deepslate_lapis_ore', 'deepslate_emerald_ore',
+  'water', 'lava', 'crafting_table', 'furnace', 'smoker', 'blast_furnace', 'brewing_stand', 'chest',
+  'wheat', 'carrots', 'potatoes', 'beetroots'
+]
+const SURROUNDINGS_RADIUS = 16
+const SURROUNDINGS_CACHE_MS = 5000
+let cachedSurroundings = null
+let cachedSurroundingsAt = 0
+
+/** Cached — re-scanning ~30 block types across a 16-block radius on every single message would add real latency for little benefit, since terrain doesn't change that fast. */
+function surroundingsContext (bot) {
+  const now = Date.now()
+  if (cachedSurroundings && now - cachedSurroundingsAt < SURROUNDINGS_CACHE_MS) return cachedSurroundings
+  if (!bot.entity) return 'Surroundings: unknown right now.'
+
+  const standingOn = bot.blockAt(bot.entity.position.offset(0, -1, 0))
+  const counts = []
+  for (const name of NOTABLE_BLOCKS) {
+    const blockType = bot.registry.blocksByName[name]
+    if (!blockType) continue
+    const found = bot.findBlocks({ matching: blockType.id, maxDistance: SURROUNDINGS_RADIUS, count: 5 })
+    if (found.length) counts.push(`${name}${found.length >= 5 ? '+' : ` x${found.length}`}`)
+  }
+
+  const result = `Standing on: ${standingOn?.name || 'unknown'}. Notable blocks within ${SURROUNDINGS_RADIUS} blocks: ${counts.length ? counts.join(', ') : 'nothing notable'}.`
+  cachedSurroundings = result
+  cachedSurroundingsAt = now
+  return result
+}
+
 /** Defensive filter: strip any stray non-Latin-script characters (a known qwen2.5 quirk — it occasionally leaks CJK text) before a reply reaches chat. */
 function stripNonLatinScript (text) {
   return text.replace(/[　-鿿가-힣＀-￯]+/g, '').replace(/\s{2,}/g, ' ').trim()
@@ -154,6 +216,97 @@ const TOOLS = [
     function: {
       name: 'eat',
       description: 'Eat food from your inventory to restore hunger.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fish',
+      description: 'Go fishing with a fishing rod from your inventory. Call repeatedly to keep fishing.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'craft_item',
+      description: 'Craft an item from materials in your inventory, using a nearby crafting table if the recipe needs one.',
+      parameters: {
+        type: 'object',
+        properties: {
+          item: { type: 'string', description: 'Item to craft, e.g. "stick" or "wooden pickaxe"' },
+          count: { type: 'integer', description: 'How many to craft (default 1)' }
+        },
+        required: ['item']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'farm',
+      description: 'Harvest fully grown crops near you and replant seeds where possible.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'enter_boat',
+      description: 'Place a boat from your inventory in the water ahead and get in.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'exit_boat',
+      description: 'Get out of the boat you are currently riding.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mine_block',
+      description: 'Walk to the nearest block of the given type and mine it.',
+      parameters: {
+        type: 'object',
+        properties: { block: { type: 'string', description: 'Block name, e.g. "iron ore" or "oak log"' } },
+        required: ['block']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'smelt',
+      description: 'Smelt/cook an item in a nearby furnace or smoker (fuel is added automatically if you have any).',
+      parameters: {
+        type: 'object',
+        properties: { item: { type: 'string', description: 'Item to smelt, e.g. "raw iron" or "raw porkchop"' } },
+        required: ['item']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'brew_potion',
+      description: 'Start brewing a potion at a nearby brewing stand using water bottles and the given ingredient.',
+      parameters: {
+        type: 'object',
+        properties: { ingredient: { type: 'string', description: 'Brewing ingredient, e.g. "nether wart" or "blaze powder"' } },
+        required: ['ingredient']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'attack_nearby_hostile',
+      description: 'Fight off the nearest hostile mob threatening you.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
@@ -237,6 +390,7 @@ async function ollamaChat (bot, sender, message) {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: selfContext(bot) },
         { role: 'system', content: trustedPeopleContext(bot) },
+        { role: 'system', content: surroundingsContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` }
       ],
       tools: TOOLS,
@@ -260,6 +414,7 @@ async function ollamaChatWithToolResult (bot, sender, message, assistantMessage,
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: selfContext(bot) },
         { role: 'system', content: trustedPeopleContext(bot) },
+        { role: 'system', content: surroundingsContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` },
         assistantMessage,
         { role: 'tool', content: toolResultContent }
@@ -326,21 +481,32 @@ function bukkitMainSlotToProtocolSlot (bukkitSlot) {
   return null
 }
 
-/** Returns { item, realName } — `item` is only safe to use as an opaque handle for equip/consume; its own .name/.displayName are not trustworthy (see note above), so realName (from the server-verified listing) is what to show the player. */
-async function findFoodItem (bot) {
-  const foodNames = new Set((bot.registry?.foodsArray || []).map((f) => f.name))
+/**
+ * General ground-truth item finder: returns { item, realName, bukkitSlot }
+ * for the first main-inventory item whose SERVER-VERIFIED name satisfies
+ * `matchFn`. `item` is only safe to use as an opaque handle for equip/craft/
+ * place calls — its own .name/.displayName are not trustworthy (see note
+ * above) — `realName` (from the listing) is what to show the player or
+ * reason about.
+ */
+async function findItemByRealName (bot, matchFn) {
   const lines = await queryOwnInventoryText(bot)
   for (const line of lines) {
     const match = line.match(/^\s*slot (\d+): (\d+)x (.+)$/)
     if (!match) continue
     const realName = match[3].trim()
-    const normalizedName = realName.toLowerCase().replace(/\s+/g, '_')
-    if (!foodNames.has(normalizedName)) continue
-    const protocolSlot = bukkitMainSlotToProtocolSlot(Number(match[1]))
+    if (!matchFn(realName.toLowerCase().replace(/\s+/g, '_'))) continue
+    const bukkitSlot = Number(match[1])
+    const protocolSlot = bukkitMainSlotToProtocolSlot(bukkitSlot)
     const item = protocolSlot != null ? bot.inventory.slots[protocolSlot] : null
-    if (item) return { item, realName }
+    if (item) return { item, realName, bukkitSlot }
   }
   return null
+}
+
+function findFoodItem (bot) {
+  const foodNames = new Set((bot.registry?.foodsArray || []).map((f) => f.name))
+  return findItemByRealName(bot, (name) => foodNames.has(name))
 }
 
 async function eatFood (bot, food) {
@@ -391,6 +557,198 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         reply(`ate ${found.realName}`)
       } catch (err) {
         reply(`couldn't eat: ${err.message}`)
+      }
+      return
+    }
+    case 'fish': {
+      const rod = await findItemByRealName(bot, (name) => name === 'fishing_rod')
+      if (!rod) { reply("I don't have a fishing rod"); return }
+      try {
+        await bot.equip(rod.item, 'hand')
+        await bot.fish()
+        reply('got a bite!')
+      } catch (err) {
+        reply(`fishing didn't pan out: ${err.message}`)
+      }
+      return
+    }
+    case 'craft_item': {
+      // Caveat: recipe matching and ingredient search both go through the
+      // same locally-patched item table implicated in the eat/inventory bug
+      // above. Self-consistent internally, but if the server's real recipe
+      // validation disagrees with what this client thinks it's placing,
+      // this can fail or (rarer) produce something other than intended.
+      const normalized = toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_')
+      const itemData = bot.registry.itemsByName[normalized]
+      if (!itemData) { reply(`I don't know what "${toolArgs.item}" is`); return }
+      const count = toolArgs.count || 1
+      const tableType = bot.registry.blocksByName.crafting_table?.id
+      const craftingTable = tableType ? bot.findBlock({ matching: tableType, maxDistance: 4 }) : null
+      const recipes = bot.recipesFor(itemData.id, null, 1, craftingTable)
+      if (!recipes.length) {
+        reply(`can't craft ${toolArgs.item} right now — missing materials${craftingTable ? '' : ' or a crafting table nearby'}`)
+        return
+      }
+      try {
+        await bot.craft(recipes[0], count, craftingTable)
+        reply(`crafted ${count}x ${toolArgs.item}`)
+      } catch (err) {
+        reply(`couldn't craft that: ${err.message}`)
+      }
+      return
+    }
+    case 'farm': {
+      const CROPS = [
+        { block: 'wheat', maxAge: 7, seed: 'wheat_seeds' },
+        { block: 'carrots', maxAge: 7, seed: 'carrot' },
+        { block: 'potatoes', maxAge: 7, seed: 'potato' },
+        { block: 'beetroots', maxAge: 3, seed: 'beetroot_seeds' }
+      ]
+      let harvested = 0
+      for (const crop of CROPS) {
+        const blockType = bot.registry.blocksByName[crop.block]
+        if (!blockType) continue
+        for (let i = 0; i < 20; i++) {
+          const found = bot.findBlock({
+            matching: (b) => b.type === blockType.id && b.getProperties().age === String(crop.maxAge),
+            maxDistance: 24
+          })
+          if (!found) break
+          try {
+            await bot.pathfinder.goto(new goals.GoalNear(found.position.x, found.position.y, found.position.z, 1))
+            const pos = found.position.clone()
+            await bot.dig(found)
+            harvested++
+            const seedGT = await findItemByRealName(bot, (name) => name === crop.seed)
+            const below = bot.blockAt(pos.offset(0, -1, 0))
+            if (seedGT && below) {
+              await bot.equip(seedGT.item, 'hand')
+              await bot.placeBlock(below, new Vec3(0, 1, 0))
+            }
+          } catch (err) {
+            console.log(`[ai] farm error: ${err.stack || err}`)
+            break
+          }
+        }
+      }
+      reply(harvested > 0 ? `harvested ${harvested} crop${harvested === 1 ? '' : 's'}` : 'no ripe crops nearby')
+      return
+    }
+    case 'enter_boat': {
+      const boat = await findItemByRealName(bot, (name) => name.endsWith('_boat') || name === 'boat')
+      if (!boat) { reply("I don't have a boat"); return }
+      const water = bot.findBlock({ matching: (b) => b.name === 'water', maxDistance: 4 })
+      if (!water) { reply("I don't see water nearby to put a boat in"); return }
+      try {
+        await bot.equip(boat.item, 'hand')
+        await bot.placeEntity(water, new Vec3(0, 1, 0))
+        const boatEntity = Object.values(bot.entities)
+          .find((e) => e.name === 'boat' && e.position.distanceTo(water.position) < 2)
+        if (boatEntity) await bot.mount(boatEntity)
+        reply('hopped in the boat')
+      } catch (err) {
+        reply(`couldn't get in a boat: ${err.message}`)
+      }
+      return
+    }
+    case 'exit_boat': {
+      if (!bot.vehicle) { reply("I'm not in a boat"); return }
+      bot.dismount()
+      reply('got out of the boat')
+      return
+    }
+    case 'mine_block': {
+      const blockType = bot.registry.blocksByName[toolArgs.block.trim().toLowerCase().replace(/\s+/g, '_')]
+      if (!blockType) { reply(`I don't know what block "${toolArgs.block}" is`); return }
+      const target = bot.findBlock({ matching: blockType.id, maxDistance: 32 })
+      if (!target) { reply(`no ${toolArgs.block} nearby`); return }
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 1))
+        await bot.dig(target)
+        reply(`mined ${toolArgs.block}`)
+      } catch (err) {
+        reply(`couldn't mine that: ${err.message}`)
+      }
+      return
+    }
+    case 'smelt': {
+      // Works for furnace, smoker, or blast_furnace — same window API. Smoker
+      // is the fast option for cooking food specifically; furnace for
+      // ores/general smelting. Caveat: ingredient/fuel matching by name goes
+      // through the same locally-patched item table as craft_item above.
+      const furnaceTypes = ['furnace', 'smoker', 'blast_furnace']
+        .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
+      const furnaceBlock = bot.findBlock({ matching: (b) => furnaceTypes.includes(b.type), maxDistance: 8 })
+      if (!furnaceBlock) { reply("I don't see a furnace/smoker nearby"); return }
+      const inputGT = await findItemByRealName(bot, (name) => name === toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_'))
+      if (!inputGT) { reply(`I don't have "${toolArgs.item}" to smelt`); return }
+      const fuelGT = await findItemByRealName(bot, (name) => FUEL_NAMES.has(name))
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(furnaceBlock.position.x, furnaceBlock.position.y, furnaceBlock.position.z, 2))
+        const furnace = await bot.openFurnace(furnaceBlock)
+        if (fuelGT) await furnace.putFuel(fuelGT.item.type, null, fuelGT.item.count)
+        await furnace.putInput(inputGT.item.type, null, inputGT.item.count)
+        reply(`put ${toolArgs.item} in to smelt — I'll grab it once it's done`)
+        furnace.on('update', () => {
+          if (furnace.outputItem() && furnace.outputItem().count > 0) {
+            furnace.takeOutput().then(() => furnace.close()).catch(() => {})
+          }
+        })
+      } catch (err) {
+        reply(`couldn't smelt that: ${err.message}`)
+      }
+      return
+    }
+    case 'brew_potion': {
+      const standType = bot.registry.blocksByName.brewing_stand?.id
+      const stand = standType ? bot.findBlock({ matching: standType, maxDistance: 8 }) : null
+      if (!stand) { reply("I don't see a brewing stand nearby"); return }
+
+      const ingredientName = toolArgs.ingredient.trim().toLowerCase().replace(/\s+/g, '_')
+      const ingredientGT = await findItemByRealName(bot, (name) => name === ingredientName)
+      if (!ingredientGT) { reply(`I don't have "${toolArgs.ingredient}" to brew with`); return }
+      const bottleGT = await findItemByRealName(bot, (name) => name === 'potion' || name === 'glass_bottle')
+      if (!bottleGT) { reply('I need water bottles to brew with'); return }
+      const fuelGT = await findItemByRealName(bot, (name) => name === 'blaze_powder')
+
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(stand.position.x, stand.position.y, stand.position.z, 2))
+        const window = await bot.openBlock(stand)
+        if (fuelGT) {
+          await bot.transfer({
+            window, itemType: fuelGT.item.type, metadata: null, count: 1,
+            sourceStart: window.inventoryStart, sourceEnd: window.inventoryEnd, destStart: 4, destEnd: 5
+          })
+        }
+        await bot.transfer({
+          window, itemType: bottleGT.item.type, metadata: null, count: Math.min(3, bottleGT.item.count),
+          sourceStart: window.inventoryStart, sourceEnd: window.inventoryEnd, destStart: 0, destEnd: 3
+        })
+        await bot.transfer({
+          window, itemType: ingredientGT.item.type, metadata: null, count: 1,
+          sourceStart: window.inventoryStart, sourceEnd: window.inventoryEnd, destStart: 3, destEnd: 4
+        })
+        window.close()
+        reply(`brewing with ${toolArgs.ingredient} now — come back in a bit for the potions`)
+      } catch (err) {
+        reply(`couldn't start brewing: ${err.message}`)
+      }
+      return
+    }
+    case 'attack_nearby_hostile': {
+      const hostile = Object.values(bot.entities)
+        .filter((e) => e.type === 'hostile' || HOSTILE_MOB_NAMES.has(e.name))
+        .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0]
+      if (!hostile) { reply('no threats nearby'); return }
+      try {
+        const weapon = await findItemByRealName(bot, (name) => WEAPON_NAMES.has(name))
+        if (weapon) await bot.equip(weapon.item, 'hand')
+        await bot.pathfinder.goto(new goals.GoalFollow(hostile, 2))
+        bot.pathfinder.setGoal(null)
+        await bot.attack(hostile)
+        reply(`fighting off ${hostile.name}`)
+      } catch (err) {
+        reply(`couldn't fight it: ${err.message}`)
       }
       return
     }
@@ -586,10 +944,38 @@ async function maybeEatOrAlert (bot, notifyOwner) {
   notifyOwner(`I'm hungry (${bot.food}/20) and out of food!`)
 }
 
-/** Call once after the bot spawns. Runs on every health/food update (mineflayer's 'health' event covers both). */
+async function autoDefend (bot) {
+  if (autoDefending) return
+  if (!bot.entity) return
+  const hostile = Object.values(bot.entities)
+    .filter((e) => (e.type === 'hostile' || HOSTILE_MOB_NAMES.has(e.name)) && e.position.distanceTo(bot.entity.position) < DEFEND_RADIUS)
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0]
+  if (!hostile) return
+
+  autoDefending = true
+  try {
+    const weapon = await findItemByRealName(bot, (name) => WEAPON_NAMES.has(name))
+    if (weapon) await bot.equip(weapon.item, 'hand')
+    await bot.pathfinder.goto(new goals.GoalFollow(hostile, 2))
+    bot.pathfinder.setGoal(null)
+    if (hostile.position.distanceTo(bot.entity.position) < 3.5) await bot.attack(hostile)
+  } catch (err) {
+    console.log(`[ai] autoDefend error: ${err.stack || err}`)
+  } finally {
+    autoDefending = false
+  }
+}
+
+/** Call once after the bot spawns. Runs on every health/food update (mineflayer's 'health' event covers both) and periodically checks for nearby threats. */
 function attachAutoSurvival (bot, notifyOwner) {
   bot.on('health', () => {
     maybeEatOrAlert(bot, notifyOwner).catch((err) => console.log(`[ai] maybeEatOrAlert error: ${err.stack || err}`))
+  })
+  let tick = 0
+  bot.on('physicsTick', () => {
+    tick++
+    if (tick % DEFEND_CHECK_EVERY_TICKS !== 0) return
+    autoDefend(bot).catch((err) => console.log(`[ai] autoDefend error: ${err.stack || err}`))
   })
 }
 
