@@ -68,6 +68,24 @@ const WEAPON_NAMES = new Set([
   'wooden_axe', 'stone_axe', 'iron_axe', 'golden_axe', 'diamond_axe', 'netherite_axe', 'trident'
 ])
 const FUEL_NAMES = new Set(['coal', 'charcoal', 'coal_block', 'blaze_rod', 'lava_bucket', 'oak_planks', 'stick'])
+
+// The model sometimes generalizes a vague request ("cook the fish", no
+// specific type given) into a generic term like "raw_fish" that isn't a
+// real Minecraft item — the actual item is "cod" or "salmon". Only these
+// two are actually smeltable/campfire-cookable (tropical_fish/pufferfish
+// aren't). Falls back to exact-name matching for anything not recognized
+// as this kind of generic reference.
+const GENERIC_FOOD_ALIASES = new Map([
+  ['fish', ['cod', 'salmon']],
+  ['raw_fish', ['cod', 'salmon']],
+  ['fishes', ['cod', 'salmon']]
+])
+
+function foodQueryMatcher (normalizedQuery) {
+  const aliases = GENERIC_FOOD_ALIASES.get(normalizedQuery)
+  if (aliases) return (name) => aliases.includes(name)
+  return (name) => name === normalizedQuery
+}
 const DEFEND_RADIUS = 6
 const DEFEND_CHECK_EVERY_TICKS = 10
 let autoDefending = false
@@ -359,6 +377,18 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: { item: { type: 'string', description: 'Item to smelt, e.g. "raw iron" or "raw porkchop"' } },
+        required: ['item']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'use_campfire',
+      description: 'Cook food (like raw fish) on a nearby campfire — walks there, places up to 4 of the given food item in its open slots (it has 4 independent slots, not one like a furnace), waits about 30 seconds for them to finish, and collects the cooked results.',
+      parameters: {
+        type: 'object',
+        properties: { item: { type: 'string', description: 'Food item to cook, e.g. "cod" or "salmon"' } },
         required: ['item']
       }
     }
@@ -993,7 +1023,7 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
       const furnaceBlock = bot.findBlock({ matching: (b) => furnaceTypes.includes(b.type), maxDistance: 8 })
       if (!furnaceBlock) { reply("I don't see a furnace/smoker nearby"); return }
-      const inputGT = await findItemByRealName(bot, (name) => name === toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_'))
+      const inputGT = await findItemByRealName(bot, foodQueryMatcher(toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_')))
       if (!inputGT) { reply(`I don't have "${toolArgs.item}" to smelt`); return }
       const fuelGT = await findItemByRealName(bot, (name) => FUEL_NAMES.has(name))
       try {
@@ -1010,6 +1040,55 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       } catch (err) {
         reply(`couldn't smelt that: ${err.message}`)
       }
+      return
+    }
+    case 'use_campfire': {
+      // A campfire has 4 independent slots (unlike a furnace's single input)
+      // and each item cooks in ~30s regardless of the others — placing all 4
+      // together finishes together; the tool description already tells the
+      // model to call this once per batch rather than one item at a time.
+      const campfireTypes = ['campfire', 'soul_campfire']
+        .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
+      const campfireBlock = bot.findBlock({ matching: (b) => campfireTypes.includes(b.type), maxDistance: 16 })
+      if (!campfireBlock) { reply("I don't see a campfire nearby"); return }
+
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(campfireBlock.position.x, campfireBlock.position.y, campfireBlock.position.z, 2))
+      } catch (err) {
+        reply(`couldn't get to the campfire: ${err.message}`)
+        return
+      }
+
+      const normalized = toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_')
+      const matchFood = foodQueryMatcher(normalized)
+      let placed = 0
+      for (let i = 0; i < 4; i++) {
+        const food = await findItemByRealName(bot, matchFood)
+        if (!food) break
+        try {
+          await bot.equip(food.item, 'hand')
+          await bot.activateBlock(campfireBlock)
+          placed++
+        } catch (err) {
+          console.log(`[ai] campfire place error: ${err.stack || err}`)
+          break
+        }
+      }
+
+      if (placed === 0) {
+        reply(`I don't have any "${toolArgs.item}" to cook`)
+        return
+      }
+
+      reply(`put ${placed} ${toolArgs.item} on the campfire — I'll wait and collect them`)
+      await new Promise((resolve) => setTimeout(resolve, 30000))
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(campfireBlock.position.x, campfireBlock.position.y, campfireBlock.position.z, 1))
+      } catch (err) {
+        console.log(`[ai] campfire re-approach error: ${err.stack || err}`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000)) // let vanilla auto-pickup grab the pop-off items
+      reply(`collected the cooked ${toolArgs.item}`)
       return
     }
     case 'brew_potion': {
