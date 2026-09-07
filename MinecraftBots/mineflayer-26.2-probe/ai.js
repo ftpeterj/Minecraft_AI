@@ -1166,10 +1166,14 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
     case 'enter_boat': {
       const boat = await findItemByRealName(bot, (name) => name.endsWith('_boat') || name === 'boat')
       if (!boat) { reply("I don't have a boat"); return }
-      const water = bot.findBlock({ matching: (b) => b.name === 'water', maxDistance: 4 })
-      if (!water) { reply("I don't see water nearby to put a boat in"); return }
+      // Same client-side block corruption confirmed elsewhere could plausibly
+      // affect even a block as fundamental as water — ground truth instead.
+      const waterPos = await queryBlockPosition(bot, ['WATER'], 4)
+      if (!waterPos) { reply("I don't see water nearby to put a boat in"); return }
+      const water = bot.blockAt(new Vec3(waterPos.x, waterPos.y, waterPos.z))
       try {
         await bot.equip(boat.item, 'hand')
+        await bot.lookAt(water.position.offset(0.5, 1, 0.5))
         await bot.placeEntity(water, new Vec3(0, 1, 0))
         const boatEntity = Object.values(bot.entities)
           .find((e) => e.name === 'boat' && e.position.distanceTo(water.position) < 2)
@@ -1187,12 +1191,15 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'mine_block': {
-      const blockType = bot.registry.blocksByName[toolArgs.block.trim().toLowerCase().replace(/\s+/g, '_')]
-      if (!blockType) { reply(`I don't know what block "${toolArgs.block}" is`); return }
-      const target = bot.findBlock({ matching: blockType.id, maxDistance: 32 })
-      if (!target) { reply(`no ${toolArgs.block} nearby`); return }
+      // Same client-side block-type corruption confirmed for furnace/
+      // campfire could plausibly hit any block search — uses ground-truth
+      // /findblock instead of bot.findBlock's own type matching.
+      const materialName = toolArgs.block.trim().toUpperCase().replace(/\s+/g, '_')
+      const pos = await queryBlockPosition(bot, [materialName], 32)
+      if (!pos) { reply(`no ${toolArgs.block} nearby`); return }
+      const target = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 1))
+        await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 1))
         await bot.dig(target)
         reply(`mined ${toolArgs.block}`)
       } catch (err) {
@@ -1317,9 +1324,12 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'brew_potion': {
-      const standType = bot.registry.blocksByName.brewing_stand?.id
-      const stand = standType ? bot.findBlock({ matching: standType, maxDistance: 8 }) : null
-      if (!stand) { reply("I don't see a brewing stand nearby"); return }
+      // Same client-side block-type corruption confirmed for furnace/
+      // campfire/mine_block — uses ground-truth /findblock instead of
+      // bot.findBlock's own type matching.
+      const standPos = await queryBlockPosition(bot, ['BREWING_STAND'])
+      if (!standPos) { reply("I don't see a brewing stand nearby"); return }
+      const stand = bot.blockAt(new Vec3(standPos.x, standPos.y, standPos.z))
 
       const ingredientName = toolArgs.ingredient.trim().toLowerCase().replace(/\s+/g, '_')
       const ingredientGT = await findItemByRealName(bot, (name) => name === ingredientName)
@@ -1329,7 +1339,8 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       const fuelGT = await findItemByRealName(bot, (name) => name === 'blaze_powder')
 
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(stand.position.x, stand.position.y, stand.position.z, 2))
+        await bot.pathfinder.goto(new goals.GoalNear(standPos.x, standPos.y, standPos.z, 2))
+        await bot.lookAt(stand.position.offset(0.5, 0.5, 0.5))
         const window = await bot.openBlock(stand)
         if (fuelGT) {
           await bot.transfer({
