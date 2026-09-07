@@ -84,6 +84,14 @@ const GENERIC_FOOD_ALIASES = new Map([
 function foodQueryMatcher (normalizedQuery) {
   const aliases = GENERIC_FOOD_ALIASES.get(normalizedQuery)
   if (aliases) return (name) => aliases.includes(name)
+  // "cook the cooked_cod" doesn't make sense — confirmed live the model
+  // sometimes reaches for the OUTPUT name when asked to cook something
+  // ("cooked_cod" instead of "cod"), which then fails to find the raw item
+  // that's actually in inventory. The raw version is what's meant.
+  if (normalizedQuery.startsWith('cooked_')) {
+    const raw = normalizedQuery.slice('cooked_'.length)
+    return (name) => name === normalizedQuery || name === raw
+  }
   return (name) => name === normalizedQuery
 }
 const DEFEND_RADIUS = 6
@@ -243,6 +251,21 @@ function surroundingsContext (bot) {
 /** Defensive filter: strip any stray non-Latin-script characters (a known qwen2.5 quirk — it occasionally leaks CJK text) before a reply reaches chat. */
 function stripNonLatinScript (text) {
   return text.replace(/[　-鿿가-힣＀-￯]+/g, '').replace(/\s{2,}/g, ' ').trim()
+}
+
+/**
+ * Confirmed live: instead of a real tool_calls entry, the model sometimes
+ * just writes pseudo-code as its plain content — a bare tool name ("fish")
+ * or something call-shaped ('smelt {"item": "raw fish", "count": 4}') — which
+ * would otherwise get parroted straight into chat looking like a glitch.
+ * Only flags text that actually matches a real tool name, so genuine
+ * conversational replies are never falsely caught.
+ */
+function looksLikeRawToolCall (text) {
+  const trimmed = text.trim()
+  return TOOLS.some(({ function: { name } }) =>
+    trimmed === name || trimmed === `${name}()` || new RegExp(`^${name}\\s*[({]`).test(trimmed)
+  )
 }
 
 const TOOLS = [
@@ -1264,7 +1287,11 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
 
   const toolCalls = assistantMessage.tool_calls
   if (!toolCalls?.length) {
-    if (assistantMessage.content) reply(stripNonLatinScript(assistantMessage.content))
+    if (assistantMessage.content && looksLikeRawToolCall(assistantMessage.content)) {
+      console.log(`[ai] suppressed raw pseudo-tool-call text: ${assistantMessage.content}`)
+    } else if (assistantMessage.content) {
+      reply(stripNonLatinScript(assistantMessage.content))
+    }
     return
   }
 
