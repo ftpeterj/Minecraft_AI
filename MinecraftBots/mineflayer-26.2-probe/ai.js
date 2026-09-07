@@ -602,6 +602,24 @@ async function eatFood (bot, food) {
   await bot.consume()
 }
 
+// bot.fish()'s bite detection depends on parsing world_particles packets —
+// confirmed broken on this server (repeated PartialReadError decoding the
+// Particle variant; real 26.2's packet structure doesn't match what this
+// patched/26.1-based protocol schema expects, the same general class of bug
+// as the item-id and entity-tracking issues found earlier). That leaves
+// bot.fish() hanging forever on the very first cast, since the condition it
+// waits for structurally can't ever fire. This sidesteps it: cast, wait a
+// fixed window, reel in regardless of whether anything actually bit — lower
+// catch rate than proper bite-timing would give, but it actually completes
+// instead of hanging indefinitely.
+const FISH_CAST_WAIT_MS = 7000
+
+async function fishOnce (bot) {
+  bot.activateItem()
+  await new Promise((resolve) => setTimeout(resolve, FISH_CAST_WAIT_MS))
+  bot.activateItem()
+}
+
 
 async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
   switch (toolName) {
@@ -662,10 +680,10 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         fishingCancelled = false
         let caught = 0
         while (!fishingCancelled && caught < FISH_MAX_CATCHES_PER_CALL) {
-          await bot.fish()
+          await fishOnce(bot)
           caught++
         }
-        reply(caught > 0 ? `done fishing for now — caught ${caught}` : 'stopped fishing')
+        reply(caught > 0 ? `done fishing for now — cast ${caught} time${caught === 1 ? '' : 's'}` : 'stopped fishing')
       } catch (err) {
         reply(`fishing didn't pan out: ${err.message}`)
       }
