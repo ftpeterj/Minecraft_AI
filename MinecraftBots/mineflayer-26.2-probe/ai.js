@@ -267,6 +267,18 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'turn',
+      description: 'Turn/rotate in place without moving. Positive degrees turns clockwise/right, negative turns counter-clockwise/left. 90 = a quarter turn, 180 = face the opposite way.',
+      parameters: {
+        type: 'object',
+        properties: { degrees: { type: 'number', description: 'Degrees to turn, e.g. 90 or -90' } },
+        required: ['degrees']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'stop',
       description: 'Stop moving/following and stand still.',
       parameters: { type: 'object', properties: {}, required: [] }
@@ -769,6 +781,19 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         reply('arrived')
       } catch (err) {
         reply(`couldn't get there: ${err.message}`)
+      }
+      return
+    }
+    case 'turn': {
+      // Minecraft/mineflayer yaw increases clockwise (south=0 -> west=90 ->
+      // north=180 -> east=270), matching "turn right" — confirmed against
+      // the actual compass cycle rather than assumed.
+      const newYaw = bot.entity.yaw + (toolArgs.degrees * Math.PI) / 180
+      try {
+        await bot.look(newYaw, bot.entity.pitch, true)
+        reply(`turned ${toolArgs.degrees} degrees`)
+      } catch (err) {
+        reply(`couldn't turn: ${err.message}`)
       }
       return
     }
