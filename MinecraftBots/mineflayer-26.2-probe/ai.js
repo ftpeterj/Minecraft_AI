@@ -125,11 +125,12 @@ let autoDefending = false
 const FOLLOW_POLL_MS = 2000
 let followState = null // { name, interval }
 
-// "Fish until I say stop" — one cast/catch cycle per bot.fish() call, so
-// this loops internally rather than needing the model to keep re-issuing
-// the tool call. Capped so a stuck bobber/water edge-case can't loop forever.
-const FISH_MAX_CATCHES_PER_CALL = 10
+// "Fish until your inventory is full or I tell you to stop" — genuinely
+// open-ended, so this runs as a detached background loop (the fish tool call
+// itself returns immediately) rather than a single bounded batch. Checked
+// every cast so it can react quickly to a real 'stop'.
 let fishingCancelled = false
+let fishingLoopActive = false
 
 function stopFollowing () {
   if (followState) {
@@ -173,6 +174,11 @@ back if attacked) — you don't need to narrate every step, just act and report 
 If a message gives exact x/y/z coordinates (e.g. "go to -100 64 200" or "return to <coords>"),
 call goto_location only — never come_here as well for the same request, even if the message also
 mentions you or the word "return".
+come_here and follow_player mean someone wants you to approach or accompany them specifically —
+never call either just because a message mentions "me"/"I"/a player's name in passing while
+actually asking for something else (movement, fishing, cooking, etc.). A long compound request
+("go to X, face east, then keep fishing until I say stop") needs exactly the tools for each real
+instruction — do not add extra navigation calls that were not actually asked for.
 Always reply only in English, using only standard Latin letters — never any other script.`
 
 /**
@@ -308,7 +314,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'come_here',
-      description: 'Walk to the player who is asking, using their current position. Do NOT use this if the message gives specific x/y/z coordinates — use goto_location for that instead, and never call both for the same request.',
+      description: 'Walk to the player who is asking, using their current position. Only use this for an explicit "come here"/"come to me" request. Do NOT use this if the message gives specific x/y/z coordinates or a landmark (use goto_location instead) — and never just because the message happens to mention "me"/"I" elsewhere, e.g. in "...then resume fishing until I tell you to stop", which is not a request to approach anyone.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
@@ -316,7 +322,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'follow_player',
-      description: 'Continuously follow a named player around.',
+      description: 'Continuously follow a named player around. Only use this for an explicit "follow me"/"follow <name>"/"come with me" request — never just because a message mentions a player\'s name or "me" incidentally while asking for something else (e.g. a movement/fishing/cooking request that happens to end with "...until I say stop").',
       parameters: {
         type: 'object',
         properties: { name: { type: 'string', description: 'Player username to follow' } },
@@ -355,6 +361,30 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'move_forward',
+      description: 'Walk forward a number of blocks in whatever direction you are currently facing, without changing direction.',
+      parameters: {
+        type: 'object',
+        properties: { blocks: { type: 'number', description: 'Distance to walk forward, e.g. 7' } },
+        required: ['blocks']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'face_direction',
+      description: 'Face an exact compass direction (north/south/east/west). Use this instead of turn whenever asked to face a specific compass direction — turn only rotates relative to whatever way you happen to already be facing, which you have no way of knowing, so it can\'t reliably hit an exact compass heading.',
+      parameters: {
+        type: 'object',
+        properties: { direction: { type: 'string', enum: ['north', 'south', 'east', 'west'] } },
+        required: ['direction']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'stop',
       description: 'Stop moving/following and stand still.',
       parameters: { type: 'object', properties: {}, required: [] }
@@ -372,7 +402,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'fish',
-      description: 'Go fishing with a fishing rod from your inventory. Call repeatedly to keep fishing.',
+      description: 'Go fishing with a fishing rod from your inventory. Keeps fishing continuously in the background until your inventory is full or you are told to stop — call this once, never repeatedly for the same fishing session.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
@@ -924,6 +954,56 @@ async function fishOnce (bot) {
   return findNewCatch(before, after)
 }
 
+/** True once every one of the 36 main-inventory slots is occupied (doesn't account for existing stacks still having room — "no empty slot left" is the practical, actionable definition of full here). */
+async function isInventoryFull (bot) {
+  const lines = await queryOwnInventoryText(bot)
+  const occupied = new Set()
+  for (const line of lines) {
+    const match = line.match(/^\s*slot (\d+):/)
+    if (match) occupied.add(Number(match[1]))
+  }
+  return occupied.size >= 36
+}
+
+/**
+ * Runs detached in the background (the fish tool call itself returns right
+ * away) since "until full or told to stop" is open-ended and shouldn't block
+ * the rest of the bot's message handling for however long that takes.
+ */
+async function runFishingLoop (bot, reply) {
+  if (fishingLoopActive) return
+  fishingLoopActive = true
+  fishingCancelled = false
+  try {
+    const water = bot.findBlock({ matching: (b) => b.name === 'water', maxDistance: 5 })
+    if (!water) { reply("I don't see open water close enough to fish in"); return }
+    const rod = await findItemByRealName(bot, (name) => name === 'fishing_rod')
+    if (!rod) { reply("I don't have a fishing rod"); return }
+    await bot.equip(rod.item, 'hand')
+    await bot.lookAt(water.position.offset(0.5, 0.5, 0.5))
+
+    let casts = 0
+    let bites = 0
+    while (!fishingCancelled) {
+      if (await isInventoryFull(bot)) {
+        reply(`my inventory is full — stopping fishing (${bites} bites out of ${casts} casts)`)
+        break
+      }
+      const caught = await fishOnce(bot)
+      casts++
+      if (caught) {
+        bites++
+        reply(`Yay, I caught a ${caught}!!!`)
+      }
+    }
+    if (fishingCancelled) reply(`stopped fishing — ${bites} bites out of ${casts} casts`)
+  } catch (err) {
+    console.log(`[ai] fishing loop error: ${err.stack || err}`)
+    reply(`fishing didn't pan out: ${err.message}`)
+  } finally {
+    fishingLoopActive = false
+  }
+}
 
 async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
   switch (toolName) {
@@ -965,6 +1045,33 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       }
       return
     }
+    case 'move_forward': {
+      // Same forward-vector convention as the fix confirmed for turn: yaw=0
+      // faces south (+Z); this is the standard mineflayer forward formula.
+      const yaw = bot.entity.yaw
+      const targetX = bot.entity.position.x - Math.sin(yaw) * toolArgs.blocks
+      const targetZ = bot.entity.position.z + Math.cos(yaw) * toolArgs.blocks
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(targetX, bot.entity.position.y, targetZ, 1))
+        reply(`moved forward ${toolArgs.blocks} blocks`)
+      } catch (err) {
+        reply(`couldn't move forward: ${err.message}`)
+      }
+      return
+    }
+    case 'face_direction': {
+      // Same convention confirmed for turn: south=0, west=90°, north=180°, east=270°(-90°).
+      const YAW_BY_DIRECTION = { south: 0, west: Math.PI / 2, north: Math.PI, east: -Math.PI / 2 }
+      const yaw = YAW_BY_DIRECTION[toolArgs.direction]
+      if (yaw == null) { reply(`"${toolArgs.direction}" isn't a compass direction I know`); return }
+      try {
+        await bot.look(yaw, bot.entity.pitch, true)
+        reply(`facing ${toolArgs.direction}`)
+      } catch (err) {
+        reply(`couldn't turn: ${err.message}`)
+      }
+      return
+    }
     case 'stop': {
       stopFollowing()
       fishingCancelled = true
@@ -984,31 +1091,14 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'fish': {
-      // bot.fish() just activates the held item facing wherever the bot is
-      // currently looking — without explicitly facing open water first it
-      // can (and did, live) hook whoever's standing in front of it instead.
-      const water = bot.findBlock({ matching: (b) => b.name === 'water', maxDistance: 5 })
-      if (!water) { reply("I don't see open water close enough to fish in"); return }
-      const rod = await findItemByRealName(bot, (name) => name === 'fishing_rod')
-      if (!rod) { reply("I don't have a fishing rod"); return }
-      try {
-        await bot.equip(rod.item, 'hand')
-        await bot.lookAt(water.position.offset(0.5, 0.5, 0.5))
-        fishingCancelled = false
-        let casts = 0
-        let bites = 0
-        while (!fishingCancelled && casts < FISH_MAX_CATCHES_PER_CALL) {
-          const caught = await fishOnce(bot)
-          if (caught) {
-            bites++
-            reply(`Yay, I caught a ${caught}!!!`)
-          }
-          casts++
-        }
-        reply(casts > 0 ? `done fishing for now — ${bites} bite${bites === 1 ? '' : 's'} out of ${casts} cast${casts === 1 ? '' : 's'}` : 'stopped fishing')
-      } catch (err) {
-        reply(`fishing didn't pan out: ${err.message}`)
-      }
+      // Runs until told to stop or the inventory fills up — genuinely
+      // open-ended, so this kicks off a detached background loop instead of
+      // blocking here (confirmed live: "resume fishing until inventory is
+      // full or I tell you to stop" needs to keep going far longer than any
+      // single tool call should block message handling for).
+      if (fishingLoopActive) { reply("I'm already fishing"); return }
+      reply("starting to fish — I'll keep going until my inventory is full or you tell me to stop")
+      runFishingLoop(bot, reply).catch((err) => console.log(`[ai] runFishingLoop error: ${err.stack || err}`))
       return
     }
     case 'craft_item': {
@@ -1127,6 +1217,12 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       const fuelGT = await findItemByRealName(bot, (name) => FUEL_NAMES.has(name))
       try {
         await bot.pathfinder.goto(new goals.GoalNear(furnacePos.x, furnacePos.y, furnacePos.z, 2))
+        // Real interactions are aim-based server-side — arriving nearby isn't
+        // enough if the bot ends up facing some other direction from
+        // whatever it was doing right before. Suspected (not yet fully
+        // confirmed) cause of a live 20s openFurnace() timeout even with a
+        // ground-truth-verified real furnace at the target position.
+        await bot.lookAt(furnaceBlock.position.offset(0.5, 0.5, 0.5))
         const furnace = await bot.openFurnace(furnaceBlock)
         if (fuelGT) await furnace.putFuel(fuelGT.item.type, null, fuelGT.item.count)
         await furnace.putInput(inputGT.item.type, null, inputGT.item.count)
@@ -1163,6 +1259,7 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
 
       try {
         await bot.pathfinder.goto(new goals.GoalNear(campfirePos.x, campfirePos.y, campfirePos.z, 2))
+        await bot.lookAt(campfireBlock.position.offset(0.5, 0.5, 0.5))
       } catch (err) {
         reply(`couldn't get to the campfire: ${err.message}`)
         return
