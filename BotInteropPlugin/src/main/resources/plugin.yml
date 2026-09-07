@@ -28,6 +28,10 @@ commands:
   bottrade:
     description: Approve/deny a non-friend's trade proposal with a bot account (owner-only)
     usage: /bottrade <approve|deny|list> [name]
+  whereis:
+    description: Report any online player's real position (workaround for the bot's own unreliable client-side entity tracking)
+    usage: /whereis <player>
+    permission: botinterop.use
 
 permissions:
   botinterop.use:

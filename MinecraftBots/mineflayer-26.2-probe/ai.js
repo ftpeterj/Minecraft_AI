@@ -72,6 +72,37 @@ const DEFEND_RADIUS = 6
 const DEFEND_CHECK_EVERY_TICKS = 10
 let autoDefending = false
 
+// follow_player can't use mineflayer-pathfinder's entity-based GoalFollow —
+// the target entity object it needs isn't reliably available (see
+// queryPlayerPosition's note). Polls the real position instead and reissues
+// a fresh GoalNear periodically, closest thing to continuous following
+// without a live entity reference.
+const FOLLOW_POLL_MS = 2000
+let followState = null // { name, interval }
+
+// "Fish until I say stop" — one cast/catch cycle per bot.fish() call, so
+// this loops internally rather than needing the model to keep re-issuing
+// the tool call. Capped so a stuck bobber/water edge-case can't loop forever.
+const FISH_MAX_CATCHES_PER_CALL = 10
+let fishingCancelled = false
+
+function stopFollowing () {
+  if (followState) {
+    clearInterval(followState.interval)
+    followState = null
+  }
+}
+
+function startFollowing (bot, name) {
+  stopFollowing()
+  const interval = setInterval(() => {
+    queryPlayerPosition(bot, name).then((pos) => {
+      if (pos) bot.pathfinder.setGoal(new goals.GoalNear(pos.x, pos.y, pos.z, 2))
+    }).catch((err) => console.log(`[ai] follow poll error: ${err.stack || err}`))
+  }, FOLLOW_POLL_MS)
+  followState = { name, interval }
+}
+
 const SYSTEM_PROMPT = `You are a helpful Minecraft player-character bot on a survival server.
 Keep replies short and in-character, like a fellow player chatting, not an assistant.
 If someone asks you to do something you have a tool for, call that tool. Otherwise just reply in chat.
@@ -122,21 +153,32 @@ function selfContext (bot) {
 }
 
 /**
- * Owner + friends, with a live position lookup for whoever is currently
- * visible to the bot (same findPlayerEntity used by come_here/follow_player,
- * so it's real-time, not a stale cache). Lets the model correctly recognize
- * "I am your owner" instead of treating it as a random claim, and answer
- * "where is <friend>" without guessing.
+ * Owner + friends, with a live position lookup (via queryPlayerPosition —
+ * see its own note on why this can't just read bot.entities). Lets the
+ * model correctly recognize "I am your owner" instead of treating it as a
+ * random claim, and answer "where is <friend>" without guessing.
+ * Short-cached since this is a real network round trip per person now, not
+ * a free client-side read — avoids re-querying twice in the same exchange
+ * (the initial reply, then again when a tool result comes back).
  */
-function trustedPeopleContext (bot) {
+const TRUSTED_POSITIONS_CACHE_MS = 3000
+let cachedTrustedContext = null
+let cachedTrustedContextAt = 0
+
+async function trustedPeopleContext (bot) {
+  const now = Date.now()
+  if (cachedTrustedContext && now - cachedTrustedContextAt < TRUSTED_POSITIONS_CACHE_MS) return cachedTrustedContext
+
   const names = [{ label: OWNER_DISPLAY, key: OWNER }, ...[...friends].map((f) => ({ label: f, key: f }))]
-  const lines = names.map(({ label, key }) => {
-    const entity = findPlayerEntity(bot, key)
-    if (!entity) return `${label}: not currently visible to you.`
-    const p = entity.position
-    return `${label}: x=${p.x.toFixed(1)}, y=${p.y.toFixed(1)}, z=${p.z.toFixed(1)}.`
-  })
-  return `Your owner is ${OWNER_DISPLAY}. Trusted people and their last known positions:\n${lines.join('\n')}`
+  const lines = await Promise.all(names.map(async ({ label, key }) => {
+    const pos = await queryPlayerPosition(bot, key)
+    if (!pos) return `${label}: not currently visible to you.`
+    return `${label}: x=${pos.x.toFixed(1)}, y=${pos.y.toFixed(1)}, z=${pos.z.toFixed(1)}.`
+  }))
+  const result = `Your owner is ${OWNER_DISPLAY}. Trusted people and their last known positions:\n${lines.join('\n')}`
+  cachedTrustedContext = result
+  cachedTrustedContextAt = now
+  return result
 }
 
 // Block names are far more version-stable than items (Mojang adds new items
@@ -200,6 +242,22 @@ const TOOLS = [
         type: 'object',
         properties: { name: { type: 'string', description: 'Player username to follow' } },
         required: ['name']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'goto_location',
+      description: 'Walk to specific x/y/z coordinates — use this when given exact coordinates instead of a player or landmark name.',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'number' },
+          y: { type: 'number' },
+          z: { type: 'number' }
+        },
+        required: ['x', 'y', 'z']
       }
     }
   },
@@ -389,7 +447,7 @@ async function ollamaChat (bot, sender, message) {
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: selfContext(bot) },
-        { role: 'system', content: trustedPeopleContext(bot) },
+        { role: 'system', content: await trustedPeopleContext(bot) },
         { role: 'system', content: surroundingsContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` }
       ],
@@ -413,7 +471,7 @@ async function ollamaChatWithToolResult (bot, sender, message, assistantMessage,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: selfContext(bot) },
-        { role: 'system', content: trustedPeopleContext(bot) },
+        { role: 'system', content: await trustedPeopleContext(bot) },
         { role: 'system', content: surroundingsContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` },
         assistantMessage,
@@ -475,6 +533,36 @@ function queryOwnInventoryText (bot, timeoutMs = 1500) {
   })
 }
 
+/**
+ * Ground-truth position workaround: confirmed live that this bot's own
+ * client-side entity tracking is unreliable on the unofficial 26.2 protocol
+ * patch — a player only ~12 blocks away never appeared in bot.entities or
+ * bot.players[x].entity at all (the same general class of bug as the
+ * item-id mismatch, just affecting entity-spawn packets instead of item
+ * decoding). Self-issues BotInterop's `/whereis <player>` (server-side,
+ * Bukkit-authoritative) instead of trusting bot.entities for navigation.
+ * Filters by the target's name in the reply so concurrent calls (e.g.
+ * Promise.all over several friends) don't cross-match each other's replies.
+ */
+function queryPlayerPosition (bot, username, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let result = null
+    const onMessage = (jsonMsg) => {
+      const text = stripColorCodes(jsonMsg.toString())
+      const match = text.match(/^(.+)'s position: x=(-?[\d.]+), y=(-?[\d.]+), z=(-?[\d.]+), dimension=(.+)$/)
+      if (match && match[1].toLowerCase() === username.toLowerCase()) {
+        result = { x: Number(match[2]), y: Number(match[3]), z: Number(match[4]), dimension: match[5] }
+      }
+    }
+    bot.on('message', onMessage)
+    bot.chat(`/whereis ${username}`)
+    setTimeout(() => {
+      bot.removeListener('message', onMessage)
+      resolve(result)
+    }, timeoutMs)
+  })
+}
+
 function bukkitMainSlotToProtocolSlot (bukkitSlot) {
   if (bukkitSlot >= 0 && bukkitSlot <= 8) return 36 + bukkitSlot // hotbar
   if (bukkitSlot >= 9 && bukkitSlot <= 35) return bukkitSlot // main inventory (same numbering)
@@ -514,37 +602,37 @@ async function eatFood (bot, food) {
   await bot.consume()
 }
 
-/**
- * bot.players[name].entity can lag/stay unset even when the player is
- * genuinely nearby — fall back to scanning bot.entities directly.
- * Case-insensitive throughout: OWNER/friends are stored lowercase for trust
- * comparisons, but real Minecraft usernames aren't, and the LLM/players
- * won't always get case right either.
- */
-function findPlayerEntity (bot, username) {
-  const target = username.toLowerCase()
-  const viaPlayers = Object.values(bot.players).find((p) => p.username?.toLowerCase() === target)?.entity
-  if (viaPlayers) return viaPlayers
-  return Object.values(bot.entities).find((e) => e.type === 'player' && e.username?.toLowerCase() === target)
-}
 
 async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
   switch (toolName) {
     case 'come_here': {
-      const entity = findPlayerEntity(bot, sender)
-      if (!entity) { reply("I can't see you right now"); return }
-      bot.pathfinder.setGoal(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 1))
+      const pos = await queryPlayerPosition(bot, sender)
+      if (!pos) { reply("I can't see you right now"); return }
+      bot.pathfinder.setGoal(new goals.GoalNear(pos.x, pos.y, pos.z, 1))
       reply('on my way')
       return
     }
     case 'follow_player': {
-      const entity = findPlayerEntity(bot, toolArgs.name)
-      if (!entity) { reply(`I can't see ${toolArgs.name} right now`); return }
-      bot.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true)
+      const pos = await queryPlayerPosition(bot, toolArgs.name)
+      if (!pos) { reply(`I can't see ${toolArgs.name} right now`); return }
+      startFollowing(bot, toolArgs.name)
+      bot.pathfinder.setGoal(new goals.GoalNear(pos.x, pos.y, pos.z, 2))
       reply(`following ${toolArgs.name}`)
       return
     }
+    case 'goto_location': {
+      stopFollowing()
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(toolArgs.x, toolArgs.y, toolArgs.z, 1))
+        reply('arrived')
+      } catch (err) {
+        reply(`couldn't get there: ${err.message}`)
+      }
+      return
+    }
     case 'stop': {
+      stopFollowing()
+      fishingCancelled = true
       bot.pathfinder.setGoal(null)
       reply('stopping')
       return
@@ -561,12 +649,23 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'fish': {
+      // bot.fish() just activates the held item facing wherever the bot is
+      // currently looking — without explicitly facing open water first it
+      // can (and did, live) hook whoever's standing in front of it instead.
+      const water = bot.findBlock({ matching: (b) => b.name === 'water', maxDistance: 5 })
+      if (!water) { reply("I don't see open water close enough to fish in"); return }
       const rod = await findItemByRealName(bot, (name) => name === 'fishing_rod')
       if (!rod) { reply("I don't have a fishing rod"); return }
       try {
         await bot.equip(rod.item, 'hand')
-        await bot.fish()
-        reply('got a bite!')
+        await bot.lookAt(water.position.offset(0.5, 0.5, 0.5))
+        fishingCancelled = false
+        let caught = 0
+        while (!fishingCancelled && caught < FISH_MAX_CATCHES_PER_CALL) {
+          await bot.fish()
+          caught++
+        }
+        reply(caught > 0 ? `done fishing for now — caught ${caught}` : 'stopped fishing')
       } catch (err) {
         reply(`fishing didn't pan out: ${err.message}`)
       }
@@ -759,8 +858,8 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       return
     }
     case 'give_item': {
-      const targetEntity = findPlayerEntity(bot, toolArgs.name)
-      if (!targetEntity) { reply(`I can't see ${toolArgs.name} right now`); return }
+      const pos = await queryPlayerPosition(bot, toolArgs.name)
+      if (!pos) { reply(`I can't see ${toolArgs.name} right now`); return }
       const item = findItem(bot.inventory, toolArgs.item)
       if (!item) {
         const have = bot.inventory.items().map((i) => i.name).join(', ') || '(empty)'
@@ -768,7 +867,7 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         return
       }
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(targetEntity.position.x, targetEntity.position.y, targetEntity.position.z, 2))
+        await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 2))
         const count = toolArgs.count ? Math.min(toolArgs.count, item.count) : item.count
         await bot.toss(item.type, null, count)
         reply(`dropped ${count} ${item.displayName || item.name} for ${toolArgs.name}`)
@@ -870,12 +969,23 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
     return
   }
 
-  const toolCall = assistantMessage.tool_calls?.[0]
-  if (!toolCall) {
+  const toolCalls = assistantMessage.tool_calls
+  if (!toolCalls?.length) {
     if (assistantMessage.content) reply(stripNonLatinScript(assistantMessage.content))
     return
   }
 
+  // A single reply can ask for several actions at once (e.g. "go there, then
+  // fish") — the model correctly returns multiple tool_calls for that, so
+  // run each in turn rather than silently dropping everything after the
+  // first (confirmed live: goto_location + fish both came back for one
+  // message, but only goto_location was ever executed before this fix).
+  for (const toolCall of toolCalls) {
+    await handleToolCall(bot, equipHandler, sender, message, assistantMessage, toolCall, reply, ownerReplyFn)
+  }
+}
+
+async function handleToolCall (bot, equipHandler, sender, message, assistantMessage, toolCall, reply, ownerReplyFn) {
   const toolName = toolCall.function.name
   const toolArgs = toolCall.function.arguments || {}
 
