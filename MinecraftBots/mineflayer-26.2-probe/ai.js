@@ -266,11 +266,27 @@ function stripNonLatinScript (text) {
  * Only flags text that actually matches a real tool name, so genuine
  * conversational replies are never falsely caught.
  */
-function looksLikeRawToolCall (text) {
-  const trimmed = text.trim()
-  return TOOLS.some(({ function: { name } }) =>
-    trimmed === name || trimmed === `${name}()` || new RegExp(`^${name}\\s*[({]`).test(trimmed)
-  )
+/**
+ * Confirmed live: with the full tool set (~18 tools) in context, the model
+ * sometimes writes pseudo-code as plain content instead of a real tool_calls
+ * entry — a bare name ("fish") or name-plus-JSON ('smelt {"item": "raw
+ * fish"}') — even though a minimal 2-tool test with the identical phrasing
+ * produces a correct call every time. This is a real small-model reliability
+ * limit under many competing tools, not something worth fighting with
+ * prompt tweaks alone. Rather than discard it (which just trades a visible
+ * glitch for silent failure — confirmed live, that's worse), this recovers
+ * the model's actual intent and runs it as a real tool call.
+ */
+function parseRawToolCallText (text) {
+  const match = text.trim().match(/^([a-z_]+)\s*(\{.*\})?$/i)
+  if (!match) return null
+  const [, name, argsJson] = match
+  if (!TOOLS.some((t) => t.function.name === name)) return null
+  let args = {}
+  if (argsJson) {
+    try { args = JSON.parse(argsJson) } catch { return null }
+  }
+  return { name, arguments: args }
 }
 
 const TOOLS = [
@@ -401,7 +417,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'smelt',
-      description: 'Smelt/cook an item in a nearby furnace or smoker (fuel is added automatically if you have any).',
+      description: 'Smelt/cook an item in a nearby furnace or smoker (fuel is added automatically if you have any). If asked to cook something at a campfire/fire pit specifically, use use_campfire instead — never this one.',
       parameters: {
         type: 'object',
         properties: { item: { type: 'string', description: 'Item to smelt, e.g. "raw iron" or "raw porkchop"' } },
@@ -1298,8 +1314,10 @@ async function handleAiMessage (bot, equipHandler, sender, message, reply, owner
 
   const toolCalls = assistantMessage.tool_calls
   if (!toolCalls?.length) {
-    if (assistantMessage.content && looksLikeRawToolCall(assistantMessage.content)) {
-      console.log(`[ai] suppressed raw pseudo-tool-call text: ${assistantMessage.content}`)
+    const salvaged = assistantMessage.content ? parseRawToolCallText(assistantMessage.content) : null
+    if (salvaged) {
+      console.log(`[ai] salvaged malformed pseudo-tool-call text as a real call: ${assistantMessage.content}`)
+      await handleToolCall(bot, equipHandler, sender, message, assistantMessage, { function: salvaged }, reply, ownerReplyFn)
     } else if (assistantMessage.content) {
       reply(stripNonLatinScript(assistantMessage.content))
     }
