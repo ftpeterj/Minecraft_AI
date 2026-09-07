@@ -639,6 +639,32 @@ function queryContainerText (bot, pos, timeoutMs = 1500) {
 }
 
 /**
+ * Ground-truth block-type workaround: confirmed live that client-side block
+ * matching is unreliable here too, not just items/entities — searching for
+ * a furnace/smoker actually matched a real campfire instead (bot.openFurnace
+ * then hung waiting for a window that could never open), the same general
+ * class of bug as everything else tonight. Self-issues BotInterop's
+ * `/findblock <materials> [radius]` (real Bukkit-side scan) instead of
+ * trusting bot.findBlock's own type matching. Returns {x, y, z} or null.
+ */
+function queryBlockPosition (bot, materialNames, radius = 16, timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    let result = null
+    const onMessage = (jsonMsg) => {
+      const text = stripColorCodes(jsonMsg.toString())
+      const match = text.match(/^Found (\w+) at (-?\d+),(-?\d+),(-?\d+)$/)
+      if (match) result = { x: Number(match[2]), y: Number(match[3]), z: Number(match[4]) }
+    }
+    bot.on('message', onMessage)
+    bot.chat(`/findblock ${materialNames.join(',')} ${radius}`)
+    setTimeout(() => {
+      bot.removeListener('message', onMessage)
+      resolve(result)
+    }, timeoutMs)
+  })
+}
+
+/**
  * Ground-truth position workaround: confirmed live that this bot's own
  * client-side entity tracking is unreliable on the unofficial 26.2 protocol
  * patch — a player only ~12 blocks away never appeared in bot.entities or
@@ -1063,15 +1089,18 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       // is the fast option for cooking food specifically; furnace for
       // ores/general smelting. Caveat: ingredient/fuel matching by name goes
       // through the same locally-patched item table as craft_item above.
-      const furnaceTypes = ['furnace', 'smoker', 'blast_furnace']
-        .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
-      const furnaceBlock = bot.findBlock({ matching: (b) => furnaceTypes.includes(b.type), maxDistance: 8 })
-      if (!furnaceBlock) { reply("I don't see a furnace/smoker nearby"); return }
+      // Client-side block-type matching is unreliable here too — confirmed
+      // live searching for furnace/smoker actually matched a real campfire
+      // instead, hanging bot.openFurnace() waiting for a window that could
+      // never open. Uses ground-truth /findblock instead.
+      const furnacePos = await queryBlockPosition(bot, ['FURNACE', 'SMOKER', 'BLAST_FURNACE'])
+      if (!furnacePos) { reply("I don't see a furnace/smoker nearby"); return }
+      const furnaceBlock = bot.blockAt(new Vec3(furnacePos.x, furnacePos.y, furnacePos.z))
       const inputGT = await findItemByRealName(bot, foodQueryMatcher(toolArgs.item.trim().toLowerCase().replace(/\s+/g, '_')))
       if (!inputGT) { reply(`I don't have "${toolArgs.item}" to smelt`); return }
       const fuelGT = await findItemByRealName(bot, (name) => FUEL_NAMES.has(name))
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(furnaceBlock.position.x, furnaceBlock.position.y, furnaceBlock.position.z, 2))
+        await bot.pathfinder.goto(new goals.GoalNear(furnacePos.x, furnacePos.y, furnacePos.z, 2))
         const furnace = await bot.openFurnace(furnaceBlock)
         if (fuelGT) await furnace.putFuel(fuelGT.item.type, null, fuelGT.item.count)
         await furnace.putInput(inputGT.item.type, null, inputGT.item.count)
@@ -1098,13 +1127,16 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         return
       }
 
-      const campfireTypes = ['campfire', 'soul_campfire']
-        .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
-      const campfireBlock = bot.findBlock({ matching: (b) => campfireTypes.includes(b.type), maxDistance: 16 })
-      if (!campfireBlock) { reply("I don't see a campfire nearby"); return }
+      // Client-side block-type matching is unreliable here too — confirmed
+      // live searching for furnace/smoker actually matched a real campfire
+      // instead, so the same corruption plausibly runs both directions.
+      // Uses ground-truth /findblock instead of bot.findBlock's own matching.
+      const campfirePos = await queryBlockPosition(bot, ['CAMPFIRE', 'SOUL_CAMPFIRE'])
+      if (!campfirePos) { reply("I don't see a campfire nearby"); return }
+      const campfireBlock = bot.blockAt(new Vec3(campfirePos.x, campfirePos.y, campfirePos.z))
 
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(campfireBlock.position.x, campfireBlock.position.y, campfireBlock.position.z, 2))
+        await bot.pathfinder.goto(new goals.GoalNear(campfirePos.x, campfirePos.y, campfirePos.z, 2))
       } catch (err) {
         reply(`couldn't get to the campfire: ${err.message}`)
         return
@@ -1133,7 +1165,7 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
       reply(`put ${placed} ${toolArgs.item} on the campfire — I'll wait and collect them`)
       await new Promise((resolve) => setTimeout(resolve, 30000))
       try {
-        await bot.pathfinder.goto(new goals.GoalNear(campfireBlock.position.x, campfireBlock.position.y, campfireBlock.position.z, 1))
+        await bot.pathfinder.goto(new goals.GoalNear(campfirePos.x, campfirePos.y, campfirePos.z, 1))
       } catch (err) {
         console.log(`[ai] campfire re-approach error: ${err.stack || err}`)
       }

@@ -36,6 +36,10 @@ commands:
     description: List any container block's contents by coordinates (chest, barrel, furnace, etc.)
     usage: /whatsin <x> <y> <z>
     permission: botinterop.use
+  findblock:
+    description: Find the nearest block of a given material near you (workaround for the bot's own unreliable client-side block-type matching)
+    usage: /findblock <material1,material2,...> [radius]
+    permission: botinterop.use
 
 permissions:
   botinterop.use:

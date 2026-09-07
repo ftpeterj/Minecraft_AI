@@ -37,6 +37,7 @@ public class BotInteropPlugin extends JavaPlugin {
         getCommand("bottrade").setExecutor(new BotTradeCommand(friends, trades));
         getCommand("whereis").setExecutor(new WhereIsCommand());
         getCommand("whatsin").setExecutor(new WhatsInCommand());
+        getCommand("findblock").setExecutor(new FindBlockCommand());
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (isBotAccount(player.getName())) {
