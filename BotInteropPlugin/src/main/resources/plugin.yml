@@ -32,6 +32,10 @@ commands:
     description: Report any online player's real position (workaround for the bot's own unreliable client-side entity tracking)
     usage: /whereis <player>
     permission: botinterop.use
+  whatsin:
+    description: List any container block's contents by coordinates (chest, barrel, furnace, etc.)
+    usage: /whatsin <x> <y> <z>
+    permission: botinterop.use
 
 permissions:
   botinterop.use:

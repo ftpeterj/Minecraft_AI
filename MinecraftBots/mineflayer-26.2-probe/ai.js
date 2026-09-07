@@ -46,12 +46,12 @@ function isTrusted (name) {
   return n === OWNER || friends.has(n)
 }
 
-// Proactive self-care: eats on its own once hungry rather than waiting to be
-// told, same as a real player would. Only alerts the owner once it's both
-// genuinely hungry AND has nothing left to eat — not on every tick, and not
-// just for being below max food (that'd fire constantly under normal play).
+// Proactive self-care: eats on its own once hungry (below 70%) rather than
+// waiting to be told, same as a real player would — checking inventory,
+// then nearby chests, before bothering the owner. Only alerts once both
+// have failed, and only once per cooldown, not on every tick below the
+// threshold.
 const AUTO_EAT_THRESHOLD = 14
-const LOW_FOOD_ALERT_THRESHOLD = 6
 const LOW_FOOD_ALERT_COOLDOWN_MS = 5 * 60 * 1000
 let autoEating = false
 let lastLowFoodAlert = 0
@@ -533,6 +533,22 @@ function queryOwnInventoryText (bot, timeoutMs = 1500) {
   })
 }
 
+/** Same ground-truth pattern as queryOwnInventoryText, but for any container block (chest/barrel/etc.) via BotInterop's /whatsin — checking a chest's contents client-side would hit the same item-id corruption. */
+function queryContainerText (bot, pos, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const lines = []
+    const onMessage = (jsonMsg) => {
+      lines.push(stripColorCodes(jsonMsg.toString()))
+    }
+    bot.on('message', onMessage)
+    bot.chat(`/whatsin ${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`)
+    setTimeout(() => {
+      bot.removeListener('message', onMessage)
+      resolve(lines)
+    }, timeoutMs)
+  })
+}
+
 /**
  * Ground-truth position workaround: confirmed live that this bot's own
  * client-side entity tracking is unreliable on the unofficial 26.2 protocol
@@ -600,6 +616,51 @@ function findFoodItem (bot) {
 async function eatFood (bot, food) {
   await bot.equip(food, 'hand')
   await bot.consume()
+}
+
+const CHEST_SEARCH_RADIUS = 24
+
+/** Returns { pos, slot } for the first food item found in a nearby chest/barrel, or null. Checking a chest's contents client-side would hit the same item-id corruption as everything else — uses /whatsin (ground truth) instead. */
+async function findFoodInNearbyChests (bot) {
+  const containerTypeIds = ['chest', 'trapped_chest', 'barrel']
+    .map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id != null)
+  const positions = bot.findBlocks({ matching: (b) => containerTypeIds.includes(b.type), maxDistance: CHEST_SEARCH_RADIUS, count: 10 })
+  const foodNames = new Set((bot.registry?.foodsArray || []).map((f) => f.name))
+
+  for (const pos of positions) {
+    const lines = await queryContainerText(bot, pos)
+    for (const line of lines) {
+      const match = line.match(/^\s*slot (\d+): (\d+)x (.+)$/)
+      if (!match) continue
+      const normalized = match[3].trim().toLowerCase().replace(/\s+/g, '_')
+      if (foodNames.has(normalized)) return { pos, slot: Number(match[1]) }
+    }
+  }
+  return null
+}
+
+/** Walks to the container, withdraws one food item from the ground-truth-verified slot, and eats it. */
+async function eatFromChest (bot, pos, slot) {
+  await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 2))
+  const block = bot.blockAt(pos)
+  const window = await bot.openContainer(block)
+  try {
+    const slotItem = window.slots[slot]
+    if (!slotItem) return false
+    // Opaque handle, same principle as findItemByRealName: use the type this
+    // exact (ground-truth-verified) slot already reports, never a name-based
+    // lookup through the corrupted local table.
+    await bot.transfer({
+      window, itemType: slotItem.type, metadata: slotItem.metadata, count: 1,
+      sourceStart: 0, sourceEnd: window.inventoryStart, destStart: window.inventoryStart, destEnd: window.inventoryEnd
+    })
+  } finally {
+    window.close()
+  }
+  const found = await findFoodItem(bot)
+  if (!found) return false
+  await eatFood(bot, found.item)
+  return true
 }
 
 // bot.fish()'s bite detection depends on parsing world_particles packets —
@@ -1108,6 +1169,12 @@ async function handleToolCall (bot, equipHandler, sender, message, assistantMess
   ownerReplyFn(`${sender} asked me to: ${describeCall(toolName, toolArgs)}. Reply "approve ${sender}" or "deny ${sender}".`)
 }
 
+/**
+ * As soon as hunger drops below 70% (14/20): eat from inventory if possible;
+ * failing that, check nearby chests/barrels and eat from one if it has food;
+ * only if neither has any does it bother the owner — and only once per
+ * cooldown, not on every tick below the threshold.
+ */
 async function maybeEatOrAlert (bot, notifyOwner) {
   if (autoEating) return
   if (typeof bot.food !== 'number' || bot.food > AUTO_EAT_THRESHOLD) return
@@ -1119,18 +1186,22 @@ async function maybeEatOrAlert (bot, notifyOwner) {
       await eatFood(bot, found.item)
       return
     }
+
+    const chestFood = await findFoodInNearbyChests(bot)
+    if (chestFood) {
+      const ate = await eatFromChest(bot, chestFood.pos, chestFood.slot)
+      if (ate) return
+    }
+
+    const now = Date.now()
+    if (now - lastLowFoodAlert < LOW_FOOD_ALERT_COOLDOWN_MS) return
+    lastLowFoodAlert = now
+    notifyOwner(`I'm hungry (${bot.food}/20) with no food in my inventory or nearby chests — I need to gather some.`)
   } catch (err) {
     console.log(`[ai] auto-eat error: ${err.stack || err}`)
-    return
   } finally {
     autoEating = false
   }
-
-  if (bot.food > LOW_FOOD_ALERT_THRESHOLD) return
-  const now = Date.now()
-  if (now - lastLowFoodAlert < LOW_FOOD_ALERT_COOLDOWN_MS) return
-  lastLowFoodAlert = now
-  notifyOwner(`I'm hungry (${bot.food}/20) and out of food!`)
 }
 
 async function autoDefend (bot) {
