@@ -699,23 +699,34 @@ const FISH_BOBBER_SPAWN_TIMEOUT_MS = 3000
 const FISH_BITE_TIMEOUT_MS = 30000
 const BOBBER_BITING_METADATA_KEY = 9
 
+// Matching packet.type against bot.registry.entitiesByName.fishing_bobber.id
+// never worked — confirmed live (20+ casts, always "0 bites", the exact
+// signature of the fallback path always firing because this never matched).
+// Entity type ids come from the same patched/26.1-based local registry
+// implicated in the item-id bug, so the numeric type the real server sends
+// for a bobber almost certainly doesn't match what this client expects.
+// Identifies the bobber by position instead: the only new entity that
+// spawns within a few blocks of the bot right after casting.
+const FISH_BOBBER_SPAWN_RADIUS = 8
+
 function trackBobberSpawn (bot, timeoutMs = FISH_BOBBER_SPAWN_TIMEOUT_MS) {
   return new Promise((resolve) => {
-    const bobberTypeId = bot.registry.entitiesByName.fishing_bobber?.id
+    const castPos = bot.entity.position
     let settled = false
-    const onSpawn = (packet) => {
-      if (packet.type !== bobberTypeId) return
-      finish(packet.entityId)
+    const onSpawn = (entity) => {
+      if (entity.type === 'player' || !entity.position) return
+      if (entity.position.distanceTo(castPos) > FISH_BOBBER_SPAWN_RADIUS) return
+      finish(entity.id)
     }
     const timeout = setTimeout(() => finish(null), timeoutMs)
     function finish (result) {
       if (settled) return
       settled = true
-      bot._client.removeListener('spawn_entity', onSpawn)
+      bot.removeListener('entitySpawn', onSpawn)
       clearTimeout(timeout)
       resolve(result)
     }
-    bot._client.on('spawn_entity', onSpawn)
+    bot.on('entitySpawn', onSpawn)
   })
 }
 
@@ -745,13 +756,14 @@ async function fishOnce (bot) {
   bot.activateItem() // cast
   const bobberId = await bobberSpawned
   if (bobberId == null) {
-    // Couldn't identify the bobber (spawn packet never arrived/matched) —
-    // fall back to a fixed wait rather than hanging forever.
+    console.log('[ai] fishOnce: no bobber identified within radius/timeout — falling back to fixed wait')
     await new Promise((resolve) => setTimeout(resolve, 7000))
     bot.activateItem()
     return false
   }
+  console.log(`[ai] fishOnce: tracking bobber entityId=${bobberId}`)
   const bit = await waitForBite(bot, bobberId)
+  console.log(`[ai] fishOnce: bite=${bit}`)
   bot.activateItem() // reel in — whether a real bite or the timeout fallback
   return bit
 }
