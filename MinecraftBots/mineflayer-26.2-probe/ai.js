@@ -21,7 +21,8 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434'
 // GPU with room to spare (~5.1GB total) — see `ollama ps` if this regresses.
 const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b'
 const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192)
-const OWNER = (process.env.BOT_OWNER || 'KingOfThisHouse').toLowerCase()
+const OWNER_DISPLAY = process.env.BOT_OWNER || 'KingOfThisHouse'
+const OWNER = OWNER_DISPLAY.toLowerCase()
 const FRIENDS_PATH = path.join(__dirname, 'friends.json')
 
 function loadFriends () {
@@ -66,6 +67,9 @@ never claim you're already friends unless a tool result told you so.
 Your current position, health/hunger, held item, and inventory are given to you before each
 message — use that when asked where you are, whether you're hurt, or what you're carrying. Never
 guess or make up any of it.
+You are also told who your owner is, who your trusted friends are, and each of their last known
+positions (when visible to you) before each message — use that fact, don't ask who someone is or
+who owns you, and never claim someone is your owner or a friend unless it's actually in that list.
 Always reply only in English, using only standard Latin letters — never any other script.`
 
 /**
@@ -91,6 +95,24 @@ function selfContext (bot) {
     : 'Inventory: empty.'
 
   return `${location}\n${status}\n${inventory}`
+}
+
+/**
+ * Owner + friends, with a live position lookup for whoever is currently
+ * visible to the bot (same findPlayerEntity used by come_here/follow_player,
+ * so it's real-time, not a stale cache). Lets the model correctly recognize
+ * "I am your owner" instead of treating it as a random claim, and answer
+ * "where is <friend>" without guessing.
+ */
+function trustedPeopleContext (bot) {
+  const names = [{ label: OWNER_DISPLAY, key: OWNER }, ...[...friends].map((f) => ({ label: f, key: f }))]
+  const lines = names.map(({ label, key }) => {
+    const entity = findPlayerEntity(bot, key)
+    if (!entity) return `${label}: not currently visible to you.`
+    const p = entity.position
+    return `${label}: x=${p.x.toFixed(1)}, y=${p.y.toFixed(1)}, z=${p.z.toFixed(1)}.`
+  })
+  return `Your owner is ${OWNER_DISPLAY}. Trusted people and their last known positions:\n${lines.join('\n')}`
 }
 
 /** Defensive filter: strip any stray non-Latin-script characters (a known qwen2.5 quirk — it occasionally leaks CJK text) before a reply reaches chat. */
@@ -214,6 +236,7 @@ async function ollamaChat (bot, sender, message) {
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: selfContext(bot) },
+        { role: 'system', content: trustedPeopleContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` }
       ],
       tools: TOOLS,
@@ -236,6 +259,7 @@ async function ollamaChatWithToolResult (bot, sender, message, assistantMessage,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: selfContext(bot) },
+        { role: 'system', content: trustedPeopleContext(bot) },
         { role: 'user', content: `${sender} says: ${message}` },
         assistantMessage,
         { role: 'tool', content: toolResultContent }
@@ -324,11 +348,18 @@ async function eatFood (bot, food) {
   await bot.consume()
 }
 
-/** bot.players[name].entity can lag/stay unset even when the player is genuinely nearby — fall back to scanning bot.entities directly. */
+/**
+ * bot.players[name].entity can lag/stay unset even when the player is
+ * genuinely nearby — fall back to scanning bot.entities directly.
+ * Case-insensitive throughout: OWNER/friends are stored lowercase for trust
+ * comparisons, but real Minecraft usernames aren't, and the LLM/players
+ * won't always get case right either.
+ */
 function findPlayerEntity (bot, username) {
-  const viaPlayers = bot.players[username]?.entity
+  const target = username.toLowerCase()
+  const viaPlayers = Object.values(bot.players).find((p) => p.username?.toLowerCase() === target)?.entity
   if (viaPlayers) return viaPlayers
-  return Object.values(bot.entities).find((e) => e.type === 'player' && e.username === username)
+  return Object.values(bot.entities).find((e) => e.type === 'player' && e.username?.toLowerCase() === target)
 }
 
 async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {

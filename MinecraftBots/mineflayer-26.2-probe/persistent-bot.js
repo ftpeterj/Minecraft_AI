@@ -207,7 +207,17 @@ function connect () {
     const p = bot.entity?.position
     log(`SPAWN at ${p?.x?.toFixed?.(1)},${p?.y?.toFixed?.(1)},${p?.z?.toFixed?.(1)} gameMode=${bot.game?.gameMode} dim=${bot.game?.dimension}`)
     try {
-      bot.pathfinder.setMovements(new Movements(bot))
+      const movements = new Movements(bot)
+      movements.canOpenDoors = true
+      // Vanilla fall damage only starts past a 3-block drop — this guarantees
+      // the pathfinder never chooses a route that takes any. Lava is already
+      // in Movements' default blocksToAvoid (confirmed in the library source).
+      movements.maxDropDown = 3
+      // Default liquidCost (1) treats swimming as free as walking, so the
+      // pathfinder would casually route through water. Raised so it strongly
+      // prefers a dry path and only swims when there's truly no alternative.
+      movements.liquidCost = 5
+      bot.pathfinder.setMovements(movements)
     } catch (err) {
       log(`pathfinder movements setup failed: ${err.stack || err}`)
     }
