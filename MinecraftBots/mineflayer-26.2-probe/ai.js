@@ -1640,4 +1640,4 @@ function attachAutoSurvival (bot, notifyOwner) {
   })
 }
 
-module.exports = { handleAiMessage, attachAutoSurvival }
+module.exports = { handleAiMessage, attachAutoSurvival, HOSTILE_MOB_NAMES }

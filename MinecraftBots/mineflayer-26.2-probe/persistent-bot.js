@@ -11,7 +11,7 @@
  */
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements } = require('mineflayer-pathfinder')
-const { handleAiMessage, attachAutoSurvival } = require('./ai')
+const { handleAiMessage, attachAutoSurvival, HOSTILE_MOB_NAMES } = require('./ai')
 const { rconCommand } = require('./rcon')
 
 const HOST = process.env.MC_HOST || 'minecraft.local'
@@ -217,6 +217,12 @@ function connect () {
       // pathfinder would casually route through water. Raised so it strongly
       // prefers a dry path and only swims when there's truly no alternative.
       movements.liquidCost = 5
+      // Soft avoidance (raises path cost, doesn't hard-block) for normal
+      // movement — not just the explicit combat/self-defense path. Matched
+      // by entity name, which carries the same corruption risk as other
+      // name-based matching found tonight, so a mismatched mob just fails to
+      // get avoided silently rather than breaking anything.
+      for (const name of HOSTILE_MOB_NAMES) movements.entitiesToAvoid.add(name)
       bot.pathfinder.setMovements(movements)
     } catch (err) {
       log(`pathfinder movements setup failed: ${err.stack || err}`)
