@@ -77,6 +77,20 @@ const FUEL_NAMES = new Set(['coal', 'charcoal', 'coal_block', 'blaze_rod', 'lava
 // real Minecraft item — falls back to exact-name matching for anything not
 // recognized as this kind of generic reference.
 const CAMPFIRE_COOKABLE_RAW = ['beef', 'chicken', 'rabbit', 'porkchop', 'mutton', 'cod', 'salmon', 'potato', 'kelp']
+// Most raw items just get a cooked_ prefix, but potato and kelp are the two
+// exceptions (baked_potato, dried_kelp) — needed to verify a cook actually
+// produced something rather than assuming the cooked_ prefix pattern always holds.
+const CAMPFIRE_COOKED_NAME = {
+  beef: 'cooked_beef',
+  chicken: 'cooked_chicken',
+  rabbit: 'cooked_rabbit',
+  porkchop: 'cooked_porkchop',
+  mutton: 'cooked_mutton',
+  cod: 'cooked_cod',
+  salmon: 'cooked_salmon',
+  potato: 'baked_potato',
+  kelp: 'dried_kelp'
+}
 const GENERIC_FOOD_ALIASES = new Map([
   ['fish', ['cod', 'salmon']],
   ['raw_fish', ['cod', 'salmon']],
@@ -718,9 +732,21 @@ async function findItemByRealName (bot, matchFn) {
     const bukkitSlot = Number(match[1])
     const protocolSlot = bukkitMainSlotToProtocolSlot(bukkitSlot)
     const item = protocolSlot != null ? bot.inventory.slots[protocolSlot] : null
-    if (item) return { item, realName, bukkitSlot }
+    if (item) return { item, realName, bukkitSlot, count: Number(match[2]) }
   }
   return null
+}
+
+/** Total count across all main-inventory slots of items whose real (server-verified) name satisfies matchFn. Used to verify an action actually consumed/produced an item rather than trusting a client-side call that resolved without error. */
+async function countMatchingItems (bot, matchFn) {
+  const lines = await queryOwnInventoryText(bot)
+  let total = 0
+  for (const line of lines) {
+    const match = line.match(/^\s*slot (\d+): (\d+)x (.+)$/)
+    if (!match) continue
+    if (matchFn(match[3].trim().toLowerCase().replace(/\s+/g, '_'))) total += Number(match[2])
+  }
+  return total
 }
 
 function findFoodItem (bot) {
@@ -1144,25 +1170,38 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
 
       const matchFood = foodQueryMatcher(normalizedEarly)
       let placed = 0
+      const placedRealNames = new Set()
       for (let i = 0; i < 4; i++) {
         const food = await findItemByRealName(bot, matchFood)
         if (!food) break
+        const rawName = food.realName.toLowerCase().replace(/\s+/g, '_')
+        const beforeCount = await countMatchingItems(bot, (n) => n === rawName)
         try {
           await bot.equip(food.item, 'hand')
           await bot.activateBlock(campfireBlock)
-          placed++
         } catch (err) {
           console.log(`[ai] campfire place error: ${err.stack || err}`)
           break
         }
+        // activateBlock resolves even if the server silently rejects the
+        // placement (e.g. all 4 slots already full) — confirmed live: it
+        // claimed 4 placed while the real raw-item count never dropped.
+        // Only count it as placed if the inventory actually lost one.
+        const afterCount = await countMatchingItems(bot, (n) => n === rawName)
+        if (afterCount >= beforeCount) {
+          console.log(`[ai] campfire place: ${rawName} count didn't decrease (${beforeCount} -> ${afterCount}) — stopping`)
+          break
+        }
+        placed++
+        placedRealNames.add(rawName)
       }
 
       if (placed === 0) {
-        reply(`I don't have any "${toolArgs.item}" to cook`)
+        reply(`I don't have any "${toolArgs.item}" to cook, or the campfire's full`)
         return
       }
 
-      reply(`put ${placed} ${toolArgs.item} on the campfire — I'll wait and collect them`)
+      reply(`I put ${placed} ${toolArgs.item} on the campfire myself — waiting to collect them`)
       await new Promise((resolve) => setTimeout(resolve, 30000))
       try {
         await bot.pathfinder.goto(new goals.GoalNear(campfirePos.x, campfirePos.y, campfirePos.z, 1))
@@ -1170,7 +1209,14 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         console.log(`[ai] campfire re-approach error: ${err.stack || err}`)
       }
       await new Promise((resolve) => setTimeout(resolve, 2000)) // let vanilla auto-pickup grab the pop-off items
-      reply(`collected the cooked ${toolArgs.item}`)
+
+      const cookedNames = new Set([...placedRealNames].map((n) => CAMPFIRE_COOKED_NAME[n] || n))
+      const gotCooked = await countMatchingItems(bot, (n) => cookedNames.has(n))
+      if (gotCooked > 0) {
+        reply(`collected the cooked ${toolArgs.item}`)
+      } else {
+        reply(`I don't actually have any cooked ${toolArgs.item} — something went wrong picking it up`)
+      }
       return
     }
     case 'brew_potion': {
