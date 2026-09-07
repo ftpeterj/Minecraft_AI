@@ -750,7 +750,30 @@ function waitForBite (bot, bobberEntityId, timeoutMs = FISH_BITE_TIMEOUT_MS) {
   })
 }
 
-/** Returns true if a bite was actually detected, false if it reeled in on a timeout/fallback instead. */
+function parseInventorySlots (lines) {
+  const slots = new Map()
+  for (const line of lines) {
+    const match = line.match(/^\s*slot (\d+): (\d+)x (.+)$/)
+    if (!match) continue
+    slots.set(Number(match[1]), { name: match[3].trim(), count: Number(match[2]) })
+  }
+  return slots
+}
+
+/** Diffs two ground-truth inventory snapshots to find what a successful reel-in actually added — a new slot filled, an existing stack growing, or a slot's item changing. */
+function findNewCatch (beforeLines, afterLines) {
+  const before = parseInventorySlots(beforeLines)
+  const after = parseInventorySlots(afterLines)
+  for (const [slot, afterItem] of after) {
+    const beforeItem = before.get(slot)
+    if (!beforeItem) return afterItem.name
+    if (beforeItem.name !== afterItem.name) return afterItem.name
+    if (afterItem.count > beforeItem.count) return afterItem.name
+  }
+  return null
+}
+
+/** Returns the caught item's real name if a bite was actually detected and something new landed in inventory, or null if it reeled in empty (no bite, or a bite with nothing to show for it). */
 async function fishOnce (bot) {
   const bobberSpawned = trackBobberSpawn(bot)
   bot.activateItem() // cast
@@ -759,13 +782,20 @@ async function fishOnce (bot) {
     console.log('[ai] fishOnce: no bobber identified within radius/timeout — falling back to fixed wait')
     await new Promise((resolve) => setTimeout(resolve, 7000))
     bot.activateItem()
-    return false
+    return null
   }
   console.log(`[ai] fishOnce: tracking bobber entityId=${bobberId}`)
   const bit = await waitForBite(bot, bobberId)
   console.log(`[ai] fishOnce: bite=${bit}`)
-  bot.activateItem() // reel in — whether a real bite or the timeout fallback
-  return bit
+  if (!bit) {
+    bot.activateItem() // reel in the empty hook
+    return null
+  }
+  const before = await queryOwnInventoryText(bot)
+  bot.activateItem() // reel in — the catch lands in inventory server-side almost immediately
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const after = await queryOwnInventoryText(bot)
+  return findNewCatch(before, after)
 }
 
 
@@ -842,7 +872,11 @@ async function runTool (bot, equipHandler, toolName, toolArgs, sender, reply) {
         let casts = 0
         let bites = 0
         while (!fishingCancelled && casts < FISH_MAX_CATCHES_PER_CALL) {
-          if (await fishOnce(bot)) bites++
+          const caught = await fishOnce(bot)
+          if (caught) {
+            bites++
+            reply(`Yay, I caught a ${caught}!!!`)
+          }
           casts++
         }
         reply(casts > 0 ? `done fishing for now — ${bites} bite${bites === 1 ? '' : 's'} out of ${casts} cast${casts === 1 ? '' : 's'}` : 'stopped fishing')
